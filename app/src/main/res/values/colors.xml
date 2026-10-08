@@ -1,0 +1,11 @@
+<resources>
+    <color name="music_bg">#fff7f2</color>
+    <color name="music_text">#15110f</color>
+    <color name="music_muted">#75615b</color>
+    <color name="music_line">#f1d8cc</color>
+    <color name="music_card">#ffffff</color>
+    <color name="music_accent">#ff6a00</color>
+    <color name="music_accent_2">#e11d1d</color>
+    <color name="music_dark">#100b09</color>
+    <color name="music_soft">#fff0e6</color>
+</resources>

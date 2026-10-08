@@ -1,0 +1,84 @@
+plugins {
+    id "com.android.application"
+}
+
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+def releaseStorePassword = keystoreProps["storePassword"] ?: System.getenv("MUSIC_STORE_PASSWORD")
+def releaseKeyAlias = keystoreProps["keyAlias"] ?: System.getenv("MUSIC_KEY_ALIAS")
+def releaseKeyPassword = keystoreProps["keyPassword"] ?: System.getenv("MUSIC_KEY_PASSWORD")
+def hasReleaseSigning = rootProject.file(keystoreProps["storeFile"] ?: "music_for_life.keystore").exists()
+        && releaseStorePassword
+        && releaseKeyAlias
+        && releaseKeyPassword
+
+android {
+    namespace "com.carrot.heartbeatmusic"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.carrot.heartbeatmusic"
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+        buildConfigField "String", "MUSIC_API_BASE", "\"https://heartbeatplay.com/api.php\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile rootProject.file(keystoreProps["storeFile"] ?: "music_for_life.keystore")
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    flavorDimensions "device"
+    productFlavors {
+        mobile {
+            dimension "device"
+            applicationId "com.carrot.heartbeatmusic"
+            resValue "string", "app_name", "Heartbeat Music"
+        }
+        tv {
+            dimension "device"
+            applicationId "com.carrot.heartbeatmusic.tv"
+            versionNameSuffix "-tv"
+            resValue "string", "app_name", "Heartbeat Music TV"
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+        release {
+            minifyEnabled false
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+}
+
+dependencies {
+    implementation "androidx.annotation:annotation:1.9.1"
+    implementation "androidx.media3:media3-exoplayer:1.5.1"
+    implementation "androidx.media3:media3-session:1.5.1"
+    implementation "androidx.media3:media3-ui:1.5.1"
+    implementation "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
+}
