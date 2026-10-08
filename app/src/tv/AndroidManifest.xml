@@ -3,7 +3,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
-        android:banner="@drawable/ic_launcher"
+        android:banner="@drawable/app_icon"
         android:isGame="false">
         <activity
             android:name=".MainActivity"
