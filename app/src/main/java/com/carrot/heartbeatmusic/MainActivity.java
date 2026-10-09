@@ -5,15 +5,19 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -57,7 +61,12 @@ public class MainActivity extends Activity {
     private ImageView languageIcon;
     private TextView languageText;
     private LinearLayout playerBar;
+    private ImageButton menuButton;
     private ImageButton playPauseButton;
+    private ImageButton stopButton;
+    private ImageView detailPlayIcon;
+    private String detailSongId = "";
+    private SharedPreferences appPrefs;
     private MediaController controller;
     private String currentLang = "en";
     private String lastHeading = "Bài hát mới";
@@ -88,6 +97,8 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 20);
         }
         repository = new MusicRepository(this);
+        appPrefs = getSharedPreferences("heartbeat_music_app", MODE_PRIVATE);
+        currentLang = appPrefs.getString("selected_lang", "en");
         buildUi();
         connectController();
         loadLanguages();
@@ -128,7 +139,7 @@ public class MainActivity extends Activity {
         languageIcon.setImageResource(R.drawable.country);
         languageButton.addView(languageIcon, new LinearLayout.LayoutParams(dp(24), dp(24)));
         languageText = new TextView(this);
-        languageText.setText("EN");
+        languageText.setText((currentLang == null || currentLang.isEmpty() ? "en" : currentLang).toUpperCase());
         languageText.setTextColor(Color.WHITE);
         languageText.setTextSize(13);
         languageText.setTypeface(Typeface.DEFAULT_BOLD);
@@ -136,6 +147,17 @@ public class MainActivity extends Activity {
         languageButton.addView(languageText);
         titleRow.addView(languageButton, new LinearLayout.LayoutParams(-2, dp(42)));
         languageButton.setOnClickListener(view -> showLanguageChooser());
+
+        menuButton = new ImageButton(this);
+        menuButton.setImageResource(R.drawable.menu);
+        menuButton.setColorFilter(Color.WHITE);
+        menuButton.setBackgroundColor(Color.rgb(36, 17, 11));
+        menuButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        menuButton.setPadding(dp(9), dp(9), dp(9), dp(9));
+        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+        menuParams.setMargins(dp(8), 0, 0, 0);
+        titleRow.addView(menuButton, menuParams);
+        menuButton.setOnClickListener(view -> showMainMenuPanel());
 
         TextView subtitle = new TextView(this);
         subtitle.setText("Heart Beat Play trong giao diện Android native");
@@ -198,6 +220,8 @@ public class MainActivity extends Activity {
         playPauseButton.setImageResource(android.R.drawable.ic_media_play);
         playPauseButton.setColorFilter(Color.WHITE);
         playPauseButton.setBackgroundColor(ACCENT);
+        playPauseButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        playPauseButton.setPadding(dp(10), dp(10), dp(10), dp(10));
         playerContent.addView(playPauseButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
         playPauseButton.setOnClickListener(view -> {
             if (controller == null) {
@@ -220,7 +244,83 @@ public class MainActivity extends Activity {
         nowPlayingView.setSingleLine(false);
         playerContent.addView(nowPlayingView, new LinearLayout.LayoutParams(0, -2, 1));
 
+        stopButton = new ImageButton(this);
+        stopButton.setImageResource(R.drawable.stop);
+        stopButton.setColorFilter(Color.WHITE);
+        stopButton.setBackgroundColor(Color.rgb(36, 17, 11));
+        stopButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        stopButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        stopParams.setMargins(dp(10), 0, 0, 0);
+        playerContent.addView(stopButton, stopParams);
+        stopButton.setOnClickListener(view -> stopAndHidePlayer());
+
         setContentView(root);
+    }
+
+    private void showMainMenuPanel() {
+        Dialog dialog = new Dialog(this);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(24), dp(18), dp(18));
+        panel.setBackgroundColor(Color.WHITE);
+
+        TextView title = bodyText("Heartbeat Music", 21, TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setPadding(0, 0, 0, dp(14));
+        panel.addView(title);
+
+        panel.addView(menuRow("Danh sách nhạc", "Bài hát theo ngôn ngữ đang chọn", () -> {
+            dialog.dismiss();
+            loadHome();
+        }));
+        panel.addView(menuRow("Thể loại", "Khám phá màu sắc âm nhạc", () -> {
+            dialog.dismiss();
+            openWeb("https://heartbeatplay.com/genres");
+        }));
+        panel.addView(menuRow("Ký ức âm nhạc", "Nghe nhạc theo dòng thời gian", () -> {
+            dialog.dismiss();
+            openWeb("https://heartbeatplay.com/song_year.php");
+        }));
+        panel.addView(menuRow("Du lịch", "Âm nhạc theo quốc gia", () -> {
+            dialog.dismiss();
+            openWeb("https://heartbeatplay.com/music_tourism.php");
+        }));
+
+        dialog.setContentView(panel);
+        Window window = dialog.getWindow();
+        dialog.setOnShowListener(shownDialog -> {
+            Window shownWindow = dialog.getWindow();
+            if (shownWindow != null) {
+                shownWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                shownWindow.setGravity(Gravity.END);
+                shownWindow.setLayout(dp(304), WindowManager.LayoutParams.MATCH_PARENT);
+            }
+        });
+        if (window != null) {
+            window.setGravity(Gravity.END);
+        }
+        dialog.show();
+    }
+
+    private View menuRow(String title, String subtitle, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setBackgroundColor(Color.rgb(255, 247, 242));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(10));
+        row.setLayoutParams(params);
+
+        TextView titleView = bodyText(title, 16, TEXT);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        row.addView(titleView);
+
+        TextView subtitleView = bodyText(subtitle, 12, MUTED);
+        subtitleView.setPadding(0, dp(4), 0, 0);
+        row.addView(subtitleView);
+        row.setOnClickListener(view -> action.run());
+        return row;
     }
 
     private void connectController() {
@@ -322,6 +422,7 @@ public class MainActivity extends Activity {
 
         row.setOnClickListener(view -> {
             currentLang = language.lang == null || language.lang.isEmpty() ? "en" : language.lang;
+            appPrefs.edit().putString("selected_lang", currentLang).apply();
             updateSelectedLanguageUi(language);
             dialog.dismiss();
             loadHome();
@@ -383,6 +484,8 @@ public class MainActivity extends Activity {
     private void renderSongs(String heading, List<Song> songs) {
         progressBar.setVisibility(View.GONE);
         showingDetail = false;
+        detailPlayIcon = null;
+        detailSongId = "";
         lastHeading = heading;
         currentSongs.clear();
         currentSongs.addAll(songs);
@@ -459,29 +562,27 @@ public class MainActivity extends Activity {
         imageLoader.load(song.avatar, cover);
 
         songList.addView(heading(song.name));
-        songList.addView(metaLine("Nghệ sĩ", song.artist.isEmpty() ? "Heart Beat Play" : song.artist));
-        songList.addView(metaLine("Album", song.album));
-        songList.addView(metaLine("Thể loại", song.genre));
-        songList.addView(metaLine("Năm", song.year));
-        songList.addView(metaLine("Ngôn ngữ", song.country.isEmpty() ? song.lang : song.country + " · " + song.lang.toUpperCase()));
-        songList.addView(metaLine("Lượt nghe", song.viewCount > 0 ? String.valueOf(song.viewCount) : ""));
+        songList.addView(songTagFlow(song));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         actions.setPadding(0, dp(12), 0, dp(16));
         songList.addView(actions, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView play = actionButton("Phát bài hát");
+        LinearLayout play = iconActionButton("Phát bài hát", R.drawable.play);
+        detailPlayIcon = (ImageView) play.getChildAt(0);
+        detailSongId = song.id;
+        updateDetailPlayIcon();
         actions.addView(play, new LinearLayout.LayoutParams(0, dp(48), 1));
-        play.setOnClickListener(view -> playAt(index));
+        play.setOnClickListener(view -> playOrToggleAt(index));
 
-        TextView open = actionButton("Mở web");
-        LinearLayout.LayoutParams openParams = new LinearLayout.LayoutParams(0, dp(48), 1);
-        openParams.setMargins(dp(10), 0, 0, 0);
-        actions.addView(open, openParams);
-        open.setOnClickListener(view -> {
+        LinearLayout share = iconActionButton("Share", R.drawable.share);
+        LinearLayout.LayoutParams shareParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        shareParams.setMargins(dp(10), 0, 0, 0);
+        actions.addView(share, shareParams);
+        share.setOnClickListener(view -> {
             if (!song.url.isEmpty()) {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(song.url)));
+                shareSong(song);
             }
         });
 
@@ -507,6 +608,30 @@ public class MainActivity extends Activity {
         TextView text = bodyText(label + ": " + value, 14, MUTED);
         text.setPadding(0, dp(5), 0, 0);
         return text;
+    }
+
+    private TagFlowLayout songTagFlow(Song song) {
+        TagFlowLayout tags = new TagFlowLayout(this, dp(8), dp(8));
+        tags.setPadding(0, dp(4), 0, dp(8));
+        addTag(tags, "Nghệ sĩ", song.artist.isEmpty() ? "Heart Beat Play" : song.artist);
+        addTag(tags, "Album", song.album);
+        addTag(tags, "Thể loại", song.genre);
+        addTag(tags, "Năm", song.year);
+        addTag(tags, "Ngôn ngữ", song.country.isEmpty() ? song.lang : song.country + " · " + song.lang.toUpperCase());
+        addTag(tags, "Lượt nghe", song.viewCount > 0 ? String.valueOf(song.viewCount) : "");
+        return tags;
+    }
+
+    private void addTag(TagFlowLayout tags, String label, String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return;
+        }
+        TextView tag = bodyText(label + ": " + value, 13, Color.rgb(138, 31, 17));
+        tag.setTypeface(Typeface.DEFAULT_BOLD);
+        tag.setPadding(dp(10), 0, dp(10), 0);
+        tag.setGravity(Gravity.CENTER);
+        tag.setBackgroundColor(Color.rgb(255, 240, 230));
+        tags.addView(tag, new LinearLayout.LayoutParams(-2, dp(34)));
     }
 
     private LinearLayout backButton(String label) {
@@ -552,6 +677,25 @@ public class MainActivity extends Activity {
         return view;
     }
 
+    private LinearLayout iconActionButton(String text, int iconRes) {
+        LinearLayout button = new LinearLayout(this);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setBackgroundColor(ACCENT);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(Color.WHITE);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.addView(icon, new LinearLayout.LayoutParams(dp(18), dp(18)));
+
+        TextView label = bodyText(text, 15, Color.WHITE);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setPadding(dp(8), 0, 0, 0);
+        button.addView(label);
+        return button;
+    }
+
     private TextView bodyText(String text, int size, int color) {
         TextView view = new TextView(this);
         view.setText(text);
@@ -589,12 +733,69 @@ public class MainActivity extends Activity {
         updatePlayerState();
     }
 
+    private void playOrToggleAt(int index) {
+        if (controller == null || index < 0 || index >= currentSongs.size()) {
+            return;
+        }
+        Song song = currentSongs.get(index);
+        String currentMediaId = controller.getCurrentMediaItem() == null ? "" : controller.getCurrentMediaItem().mediaId;
+        if (song.id.equals(currentMediaId)) {
+            playerBar.setVisibility(View.VISIBLE);
+            if (controller.isPlaying()) {
+                controller.pause();
+            } else {
+                playbackProgressBar.setVisibility(View.VISIBLE);
+                controller.play();
+            }
+            updatePlayerState();
+            return;
+        }
+        playAt(index);
+    }
+
+    private void stopAndHidePlayer() {
+        if (controller != null) {
+            controller.stop();
+            controller.clearMediaItems();
+        }
+        playbackProgressBar.setVisibility(View.GONE);
+        playerBar.setVisibility(View.GONE);
+        nowPlayingView.setText("Chọn một bài hát để phát");
+        detailSongId = "";
+        updatePlayerState();
+    }
+
+    private void shareSong(Song song) {
+        Intent shareIntent = new Intent(Intent.ACTION_SEND);
+        shareIntent.setType("text/plain");
+        shareIntent.putExtra(Intent.EXTRA_SUBJECT, song.name);
+        shareIntent.putExtra(Intent.EXTRA_TEXT, song.name + "\n" + song.url);
+        startActivity(Intent.createChooser(shareIntent, "Share"));
+    }
+
+    private void openWeb(String url) {
+        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+    }
+
     private void updatePlayerState() {
         if (controller != null && controller.isPlaying()) {
             playPauseButton.setImageResource(android.R.drawable.ic_media_pause);
         } else {
             playPauseButton.setImageResource(android.R.drawable.ic_media_play);
         }
+        updateDetailPlayIcon();
+    }
+
+    private void updateDetailPlayIcon() {
+        if (detailPlayIcon == null) {
+            return;
+        }
+        boolean detailSongIsPlaying = false;
+        if (controller != null && controller.isPlaying() && controller.getCurrentMediaItem() != null) {
+            String mediaId = controller.getCurrentMediaItem().mediaId;
+            detailSongIsPlaying = mediaId != null && mediaId.equals(detailSongId);
+        }
+        detailPlayIcon.setImageResource(detailSongIsPlaying ? R.drawable.pause : R.drawable.play);
     }
 
     private void showError(String message) {
