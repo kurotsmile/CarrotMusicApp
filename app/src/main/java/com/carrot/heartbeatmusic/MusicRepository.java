@@ -35,6 +35,11 @@ public class MusicRepository {
         void onError(String message);
     }
 
+    public interface MenuItemCallback {
+        void onItems(List<MenuListItem> items);
+        void onError(String message);
+    }
+
     public void loadHome(String lang, Callback callback) {
         String url = BuildConfig.MUSIC_API_BASE + "?action=home&limit=36&lang=" + encode(lang);
         load(url, "songs", "songs_home_v2_" + (lang == null || lang.isEmpty() ? "en" : lang), SONG_LIST_TTL_MS, callback);
@@ -42,6 +47,26 @@ public class MusicRepository {
 
     public void search(String query, String lang, Callback callback) {
         load(BuildConfig.MUSIC_API_BASE + "?action=search&limit=48&q=" + encode(query) + "&lang=" + encode(lang), "songs", "", 0, callback);
+    }
+
+    public void loadMenuItems(String action, MenuItemCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(BuildConfig.MUSIC_API_BASE + "?action=" + encode(action) + "&limit=60").openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(16000);
+                connection.setRequestProperty("Accept", "application/json");
+                String body = readAll(connection.getInputStream());
+                callback.onItems(parseMenuItems(body));
+            } catch (Exception e) {
+                callback.onError(e.getMessage() == null ? "Can not load menu" : e.getMessage());
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+        }).start();
     }
 
     public void loadLanguages(LanguageCallback callback) {
@@ -159,6 +184,21 @@ public class MusicRepository {
             }
         }
         return languages;
+    }
+
+    private List<MenuListItem> parseMenuItems(String body) throws Exception {
+        JSONObject root = new JSONObject(body);
+        if (!root.optBoolean("ok", false)) {
+            throw new IllegalStateException(root.optString("error", "Can not load menu"));
+        }
+        JSONArray items = root.optJSONArray("items");
+        List<MenuListItem> menuItems = new ArrayList<>();
+        if (items != null) {
+            for (int i = 0; i < items.length(); i++) {
+                menuItems.add(new MenuListItem(items.getJSONObject(i)));
+            }
+        }
+        return menuItems;
     }
 
     private String getCachedBody(String key, long ttlMs) {

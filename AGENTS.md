@@ -26,10 +26,19 @@ Use `rg` or `find` with targeted paths before opening files.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicRepository.java`: API calls and local cache logic.
 - `app/src/main/java/com/carrot/heartbeatmusic/Song.java`: song JSON model.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicLanguage.java`: language/country JSON model.
+- `app/src/main/java/com/carrot/heartbeatmusic/MenuListItem.java`: generic right-menu list item model.
+- `app/src/main/java/com/carrot/heartbeatmusic/MusicMenuAction.java`: interface for a right-panel menu action.
+- `app/src/main/java/com/carrot/heartbeatmusic/MusicListMenuAction.java`: handles `Danh sách nhạc`.
+- `app/src/main/java/com/carrot/heartbeatmusic/GenreMenuAction.java`: handles `Thể loại`.
+- `app/src/main/java/com/carrot/heartbeatmusic/MemoryMenuAction.java`: handles `Ký ức âm nhạc`.
+- `app/src/main/java/com/carrot/heartbeatmusic/TourismMenuAction.java`: handles `Du lịch`.
+- `app/src/main/java/com/carrot/heartbeatmusic/PlaylistManager.java`: manages the in-app playlist queue, current index, and prev/next navigation.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicPlaybackService.java`: Media3 background playback service.
 - `app/src/main/java/com/carrot/heartbeatmusic/ImageLoader.java`: simple remote image loading helper.
+- `app/src/main/java/com/carrot/heartbeatmusic/TagFlowLayout.java`: wraps detail tag chips onto multiple lines.
 - `app/src/main/res/drawable/app_icon.png`: app icon copied from `icon.png`.
 - `app/src/main/res/drawable/back.png`: back button icon copied from `images/back.png`.
+- `app/src/main/res/drawable/add_to_playlist.png`, `next.png`, `prev.png`: playlist controls copied from `images/`.
 - `images/`: source images provided by the user.
 - `music_for_life.keystore`: existing keystore. Do not commit or expose passwords.
 
@@ -47,6 +56,9 @@ Useful API actions:
 - `action=search&q=...&lang=vi`
 - `action=languages`
 - `action=song&id=...`
+- `action=genres`
+- `action=memories`
+- `action=tourism`
 
 ## Existing Helpers To Reuse
 
@@ -54,7 +66,11 @@ Useful API actions:
 - Use `MusicRepository` cache helpers instead of adding separate cache code elsewhere.
 - Use `ImageLoader.load` for remote covers/icons.
 - Use `Song` and `MusicLanguage` models rather than parsing JSON inside UI code.
-- Use `playAt()` in `MainActivity` to start playback so the queue, media metadata, notification, and lock-screen playback stay consistent.
+- Use `MenuListItem` for right-panel menu lists.
+- Put right-panel menu behavior in its own `*MenuAction.java` file.
+- Use `PlaylistManager` for add-to-playlist, current queue, and prev/next state.
+- Use `playAt()` / `playPlaylistCurrent()` in `MainActivity` to start playback so media metadata, notification, and lock-screen playback stay consistent.
+- If API menu items have no avatar, render the matching local icon from `app/src/main/res/drawable/`.
 
 ## Build Notes
 

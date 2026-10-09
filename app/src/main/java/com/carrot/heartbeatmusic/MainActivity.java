@@ -51,21 +51,28 @@ public class MainActivity extends Activity {
 
     private MusicRepository repository;
     private final ImageLoader imageLoader = new ImageLoader();
+    private final PlaylistManager playlistManager = new PlaylistManager();
     private final List<Song> currentSongs = new ArrayList<>();
     private final List<MusicLanguage> languages = new ArrayList<>();
+    private final List<MusicMenuAction> menuActions = new ArrayList<>();
     private LinearLayout songList;
     private ProgressBar progressBar;
     private ProgressBar playbackProgressBar;
-    private TextView nowPlayingView;
+    private TextView nowPlayingTitleView;
+    private TextView nowPlayingArtistView;
     private LinearLayout languageButton;
     private ImageView languageIcon;
     private TextView languageText;
     private LinearLayout playerBar;
     private ImageButton menuButton;
+    private ImageButton prevButton;
     private ImageButton playPauseButton;
+    private ImageButton nextButton;
+    private ImageButton infoButton;
     private ImageButton stopButton;
     private ImageView detailPlayIcon;
     private String detailSongId = "";
+    private Song currentPlayingSong = null;
     private SharedPreferences appPrefs;
     private MediaController controller;
     private String currentLang = "en";
@@ -88,6 +95,18 @@ public class MainActivity extends Activity {
         public void onIsPlayingChanged(boolean isPlaying) {
             updatePlayerState();
         }
+
+        @Override
+        public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+            if (mediaItem == null) {
+                return;
+            }
+            int playlistIndex = playlistManager.indexOf(mediaItem.mediaId);
+            if (playlistIndex >= 0) {
+                playlistManager.setCurrentIndex(playlistIndex);
+                updateNowPlaying(playlistManager.current());
+            }
+        }
     };
 
     @Override
@@ -99,10 +118,19 @@ public class MainActivity extends Activity {
         repository = new MusicRepository(this);
         appPrefs = getSharedPreferences("heartbeat_music_app", MODE_PRIVATE);
         currentLang = appPrefs.getString("selected_lang", "en");
+        setupMenuActions();
         buildUi();
         connectController();
         loadLanguages();
         loadHome();
+    }
+
+    private void setupMenuActions() {
+        menuActions.clear();
+        menuActions.add(new MusicListMenuAction());
+        menuActions.add(new GenreMenuAction());
+        menuActions.add(new MemoryMenuAction());
+        menuActions.add(new TourismMenuAction());
     }
 
     private void buildUi() {
@@ -216,6 +244,18 @@ public class MainActivity extends Activity {
         playerContent.setPadding(dp(14), dp(10), dp(14), dp(10));
         playerBar.addView(playerContent, new LinearLayout.LayoutParams(-1, 0, 1));
 
+        prevButton = new ImageButton(this);
+        prevButton.setImageResource(R.drawable.prev);
+        prevButton.setColorFilter(Color.WHITE);
+        prevButton.setBackgroundColor(Color.rgb(36, 17, 11));
+        prevButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        prevButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        prevButton.setVisibility(View.GONE);
+        LinearLayout.LayoutParams prevParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        prevParams.setMargins(0, 0, dp(8), 0);
+        playerContent.addView(prevButton, prevParams);
+        prevButton.setOnClickListener(view -> playPreviousFromPlaylist());
+
         playPauseButton = new ImageButton(this);
         playPauseButton.setImageResource(android.R.drawable.ic_media_play);
         playPauseButton.setColorFilter(Color.WHITE);
@@ -236,13 +276,49 @@ public class MainActivity extends Activity {
             updatePlayerState();
         });
 
-        nowPlayingView = new TextView(this);
-        nowPlayingView.setText("Chọn một bài hát để phát");
-        nowPlayingView.setTextColor(Color.WHITE);
-        nowPlayingView.setTextSize(15);
-        nowPlayingView.setPadding(dp(12), 0, 0, 0);
-        nowPlayingView.setSingleLine(false);
-        playerContent.addView(nowPlayingView, new LinearLayout.LayoutParams(0, -2, 1));
+        nextButton = new ImageButton(this);
+        nextButton.setImageResource(R.drawable.next);
+        nextButton.setColorFilter(Color.WHITE);
+        nextButton.setBackgroundColor(Color.rgb(36, 17, 11));
+        nextButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        nextButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        nextButton.setVisibility(View.GONE);
+        LinearLayout.LayoutParams nextParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        nextParams.setMargins(dp(8), 0, 0, 0);
+        playerContent.addView(nextButton, nextParams);
+        nextButton.setOnClickListener(view -> playNextFromPlaylist());
+
+        LinearLayout nowPlayingBox = new LinearLayout(this);
+        nowPlayingBox.setOrientation(LinearLayout.VERTICAL);
+        nowPlayingBox.setGravity(Gravity.CENTER_VERTICAL);
+        nowPlayingBox.setPadding(dp(12), 0, 0, 0);
+        playerContent.addView(nowPlayingBox, new LinearLayout.LayoutParams(0, -2, 1));
+
+        nowPlayingTitleView = new TextView(this);
+        nowPlayingTitleView.setText("Chọn một bài hát để phát");
+        nowPlayingTitleView.setTextColor(Color.WHITE);
+        nowPlayingTitleView.setTextSize(15);
+        nowPlayingTitleView.setTypeface(Typeface.DEFAULT_BOLD);
+        nowPlayingTitleView.setSingleLine(true);
+        nowPlayingBox.addView(nowPlayingTitleView);
+
+        nowPlayingArtistView = new TextView(this);
+        nowPlayingArtistView.setText("Heart Beat Play");
+        nowPlayingArtistView.setTextColor(ACCENT);
+        nowPlayingArtistView.setTextSize(13);
+        nowPlayingArtistView.setSingleLine(true);
+        nowPlayingBox.addView(nowPlayingArtistView);
+
+        infoButton = new ImageButton(this);
+        infoButton.setImageResource(R.drawable.info);
+        infoButton.setColorFilter(Color.WHITE);
+        infoButton.setBackgroundColor(Color.rgb(36, 17, 11));
+        infoButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        infoButton.setPadding(dp(11), dp(11), dp(11), dp(11));
+        LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        infoParams.setMargins(dp(10), 0, 0, 0);
+        playerContent.addView(infoButton, infoParams);
+        infoButton.setOnClickListener(view -> showCurrentPlayingDetail());
 
         stopButton = new ImageButton(this);
         stopButton.setImageResource(R.drawable.stop);
@@ -270,22 +346,9 @@ public class MainActivity extends Activity {
         title.setPadding(0, 0, 0, dp(14));
         panel.addView(title);
 
-        panel.addView(menuRow("Danh sách nhạc", "Bài hát theo ngôn ngữ đang chọn", () -> {
-            dialog.dismiss();
-            loadHome();
-        }));
-        panel.addView(menuRow("Thể loại", "Khám phá màu sắc âm nhạc", () -> {
-            dialog.dismiss();
-            openWeb("https://heartbeatplay.com/genres");
-        }));
-        panel.addView(menuRow("Ký ức âm nhạc", "Nghe nhạc theo dòng thời gian", () -> {
-            dialog.dismiss();
-            openWeb("https://heartbeatplay.com/song_year.php");
-        }));
-        panel.addView(menuRow("Du lịch", "Âm nhạc theo quốc gia", () -> {
-            dialog.dismiss();
-            openWeb("https://heartbeatplay.com/music_tourism.php");
-        }));
+        for (MusicMenuAction action : menuActions) {
+            panel.addView(menuRow(action, dialog));
+        }
 
         dialog.setContentView(panel);
         Window window = dialog.getWindow();
@@ -303,23 +366,42 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
-    private View menuRow(String title, String subtitle, Runnable action) {
+    private View menuRow(MusicMenuAction action, Dialog dialog) {
         LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(12), dp(14), dp(12));
         row.setBackgroundColor(Color.rgb(255, 247, 242));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         params.setMargins(0, 0, 0, dp(10));
         row.setLayoutParams(params);
 
-        TextView titleView = bodyText(title, 16, TEXT);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        row.addView(titleView);
+        LinearLayout iconBox = new LinearLayout(this);
+        iconBox.setGravity(Gravity.CENTER);
+        iconBox.setBackgroundColor(Color.rgb(16, 11, 9));
+        row.addView(iconBox, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
-        TextView subtitleView = bodyText(subtitle, 12, MUTED);
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(action.iconRes());
+        icon.setColorFilter(Color.WHITE);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        iconBox.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
+
+        LinearLayout textBox = new LinearLayout(this);
+        textBox.setOrientation(LinearLayout.VERTICAL);
+        textBox.setPadding(dp(12), 0, 0, 0);
+        row.addView(textBox, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView titleView = bodyText(action.title(), 16, TEXT);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        textBox.addView(titleView);
+
+        TextView subtitleView = bodyText(action.subtitle(), 12, MUTED);
         subtitleView.setPadding(0, dp(4), 0, 0);
-        row.addView(subtitleView);
-        row.setOnClickListener(view -> action.run());
+        textBox.addView(subtitleView);
+        row.setOnClickListener(view -> {
+            dialog.dismiss();
+            action.open(this);
+        });
         return row;
     }
 
@@ -465,6 +547,28 @@ public class MainActivity extends Activity {
         });
     }
 
+    void loadHomeFromMenu() {
+        loadHome();
+    }
+
+    void loadMenuItems(String heading, String action, int fallbackIconRes) {
+        showingDetail = false;
+        detailPlayIcon = null;
+        detailSongId = "";
+        progressBar.setVisibility(View.VISIBLE);
+        repository.loadMenuItems(action, new MusicRepository.MenuItemCallback() {
+            @Override
+            public void onItems(List<MenuListItem> items) {
+                runOnUiThread(() -> renderMenuItems(heading, items, fallbackIconRes));
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> showError(message));
+            }
+        });
+    }
+
     private void loadSearch(String query) {
         showingDetail = false;
         progressBar.setVisibility(View.VISIBLE);
@@ -505,6 +609,64 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void renderMenuItems(String heading, List<MenuListItem> items, int fallbackIconRes) {
+        progressBar.setVisibility(View.GONE);
+        showingDetail = false;
+        lastHeading = heading;
+        currentSongs.clear();
+        songList.removeAllViews();
+        songList.addView(heading(heading));
+
+        if (items.isEmpty()) {
+            TextView empty = bodyText("Chưa có dữ liệu.", 16, MUTED);
+            empty.setPadding(dp(8), dp(28), dp(8), dp(28));
+            songList.addView(empty);
+            return;
+        }
+
+        for (MenuListItem item : items) {
+            songList.addView(menuListItemRow(item, fallbackIconRes));
+        }
+    }
+
+    private View menuListItemRow(MenuListItem item, int fallbackIconRes) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        row.setBackgroundColor(CARD);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+        rowParams.setMargins(0, 0, 0, dp(10));
+        row.setLayoutParams(rowParams);
+
+        ImageView icon = new ImageView(this);
+        icon.setBackgroundColor(Color.rgb(255, 226, 209));
+        icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(58), dp(58)));
+        if (item.avatar == null || item.avatar.isEmpty()) {
+            icon.setImageResource(fallbackIconRes);
+            icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            icon.setPadding(dp(10), dp(10), dp(10), dp(10));
+        } else {
+            imageLoader.load(item.avatar, icon);
+        }
+
+        LinearLayout textBox = new LinearLayout(this);
+        textBox.setOrientation(LinearLayout.VERTICAL);
+        textBox.setPadding(dp(12), 0, 0, 0);
+        row.addView(textBox, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView title = bodyText(item.title, 17, TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        textBox.addView(title);
+
+        if (item.subtitle != null && !item.subtitle.isEmpty()) {
+            TextView subtitle = bodyText(item.subtitle, 13, MUTED);
+            subtitle.setPadding(0, dp(4), 0, 0);
+            textBox.addView(subtitle);
+        }
+        return row;
+    }
+
     private View songRow(Song song, int index) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -533,6 +695,17 @@ public class MainActivity extends Activity {
         TextView artist = bodyText(song.artist.isEmpty() ? "Heart Beat Play" : song.artist, 13, MUTED);
         artist.setPadding(0, dp(4), 0, 0);
         meta.addView(artist);
+
+        ImageButton addPlaylist = new ImageButton(this);
+        addPlaylist.setImageResource(R.drawable.add_to_playlist);
+        addPlaylist.setColorFilter(Color.WHITE);
+        addPlaylist.setBackgroundColor(Color.rgb(36, 17, 11));
+        addPlaylist.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        addPlaylist.setPadding(dp(10), dp(10), dp(10), dp(10));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(dp(46), dp(46));
+        addParams.setMargins(0, 0, dp(8), 0);
+        row.addView(addPlaylist, addParams);
+        addPlaylist.setOnClickListener(view -> addToPlaylist(song));
 
         ImageButton play = new ImageButton(this);
         play.setImageResource(android.R.drawable.ic_media_play);
@@ -575,6 +748,12 @@ public class MainActivity extends Activity {
         updateDetailPlayIcon();
         actions.addView(play, new LinearLayout.LayoutParams(0, dp(48), 1));
         play.setOnClickListener(view -> playOrToggleAt(index));
+
+        LinearLayout addPlaylist = iconActionButton("Playlist", R.drawable.add_to_playlist);
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        addParams.setMargins(dp(10), 0, 0, 0);
+        actions.addView(addPlaylist, addParams);
+        addPlaylist.setOnClickListener(view -> addToPlaylist(song));
 
         LinearLayout share = iconActionButton("Share", R.drawable.share);
         LinearLayout.LayoutParams shareParams = new LinearLayout.LayoutParams(0, dp(48), 1);
@@ -708,10 +887,38 @@ public class MainActivity extends Activity {
         if (controller == null || index < 0 || index >= currentSongs.size()) {
             return;
         }
+        Song song = currentSongs.get(index);
+        int playlistIndex = playlistManager.indexOf(song.id);
+        if (playlistManager.hasMultiple() && playlistIndex >= 0) {
+            playlistManager.setCurrentIndex(playlistIndex);
+        } else {
+            playlistManager.setSingle(song);
+        }
+        playPlaylistCurrent();
+    }
+
+    private void playPlaylistCurrent() {
+        if (controller == null) {
+            return;
+        }
+        Song song = playlistManager.current();
+        if (song == null || !song.canPlay()) {
+            return;
+        }
         playerBar.setVisibility(View.VISIBLE);
         playbackProgressBar.setVisibility(View.VISIBLE);
+        List<MediaItem> mediaItems = buildPlaylistMediaItems();
+        int startIndex = Math.max(0, playlistManager.currentIndex());
+        controller.setMediaItems(mediaItems, startIndex, 0);
+        controller.prepare();
+        controller.play();
+        updateNowPlaying(song);
+        updatePlayerState();
+    }
+
+    private List<MediaItem> buildPlaylistMediaItems() {
         List<MediaItem> mediaItems = new ArrayList<>();
-        for (Song song : currentSongs) {
+        for (Song song : playlistManager.items()) {
             MediaMetadata metadata = new MediaMetadata.Builder()
                     .setTitle(song.name)
                     .setArtist(song.artist)
@@ -725,12 +932,61 @@ public class MainActivity extends Activity {
                     .build();
             mediaItems.add(item);
         }
-        controller.setMediaItems(mediaItems, index, 0);
-        controller.prepare();
-        controller.play();
-        Song song = currentSongs.get(index);
-        nowPlayingView.setText(song.name + "\n" + (song.artist.isEmpty() ? "Heart Beat Play" : song.artist));
-        updatePlayerState();
+        return mediaItems;
+    }
+
+    private void updateNowPlaying(Song song) {
+        currentPlayingSong = song;
+        if (song == null) {
+            nowPlayingTitleView.setText("Chọn một bài hát để phát");
+            nowPlayingArtistView.setText("Heart Beat Play");
+        } else {
+            nowPlayingTitleView.setText(song.name);
+            nowPlayingArtistView.setText(song.artist.isEmpty() ? "Heart Beat Play" : song.artist);
+        }
+        updatePlaylistButtons();
+    }
+
+    private void addToPlaylist(Song song) {
+        if (song == null || !song.canPlay()) {
+            Toast.makeText(this, "Bài hát này chưa có file phát.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (currentPlayingSong != null && playlistManager.indexOf(currentPlayingSong.id) < 0) {
+            playlistManager.add(currentPlayingSong);
+        }
+        boolean added = playlistManager.add(song);
+        if (currentPlayingSong != null && currentPlayingSong.id.equals(song.id)) {
+            playlistManager.setCurrentIndex(playlistManager.indexOf(song.id));
+        }
+        updatePlaylistButtons();
+        Toast.makeText(this, added ? "Đã thêm vào playlist." : "Bài hát đã có trong playlist.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void playNextFromPlaylist() {
+        if (!playlistManager.hasMultiple()) {
+            return;
+        }
+        playlistManager.next();
+        playPlaylistCurrent();
+    }
+
+    private void playPreviousFromPlaylist() {
+        if (!playlistManager.hasMultiple()) {
+            return;
+        }
+        playlistManager.previous();
+        playPlaylistCurrent();
+    }
+
+    private void updatePlaylistButtons() {
+        int visibility = playlistManager.hasMultiple() ? View.VISIBLE : View.GONE;
+        if (prevButton != null) {
+            prevButton.setVisibility(visibility);
+        }
+        if (nextButton != null) {
+            nextButton.setVisibility(visibility);
+        }
     }
 
     private void playOrToggleAt(int index) {
@@ -760,9 +1016,33 @@ public class MainActivity extends Activity {
         }
         playbackProgressBar.setVisibility(View.GONE);
         playerBar.setVisibility(View.GONE);
-        nowPlayingView.setText("Chọn một bài hát để phát");
+        playlistManager.clear();
+        updateNowPlaying(null);
         detailSongId = "";
+        currentPlayingSong = null;
         updatePlayerState();
+    }
+
+    private void showCurrentPlayingDetail() {
+        if (currentPlayingSong == null) {
+            Toast.makeText(this, "Chưa có bài hát đang phát.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int index = findSongIndex(currentPlayingSong.id);
+        if (index < 0) {
+            currentSongs.add(0, currentPlayingSong);
+            index = 0;
+        }
+        showSongDetail(currentPlayingSong, index);
+    }
+
+    private int findSongIndex(String songId) {
+        for (int i = 0; i < currentSongs.size(); i++) {
+            if (currentSongs.get(i).id.equals(songId)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void shareSong(Song song) {
@@ -771,10 +1051,6 @@ public class MainActivity extends Activity {
         shareIntent.putExtra(Intent.EXTRA_SUBJECT, song.name);
         shareIntent.putExtra(Intent.EXTRA_TEXT, song.name + "\n" + song.url);
         startActivity(Intent.createChooser(shareIntent, "Share"));
-    }
-
-    private void openWeb(String url) {
-        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
     }
 
     private void updatePlayerState() {
