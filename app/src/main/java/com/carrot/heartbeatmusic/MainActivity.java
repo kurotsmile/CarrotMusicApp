@@ -7,13 +7,20 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.speech.RecognizerIntent;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
@@ -25,7 +32,11 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.SeekBar;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -39,9 +50,14 @@ import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 public class MainActivity extends Activity {
+    private static final int VOICE_SEARCH_REQUEST = 42;
+    private static final int[] SLEEP_TIMER_MINUTES = new int[]{5, 15, 30, 60, 120, 180};
     private static final int DARK = Color.rgb(16, 11, 9);
     private static final int BG = Color.rgb(255, 247, 242);
     private static final int CARD = Color.WHITE;
@@ -53,9 +69,14 @@ public class MainActivity extends Activity {
     private final ImageLoader imageLoader = new ImageLoader();
     private final PlaylistManager playlistManager = new PlaylistManager();
     private final List<Song> currentSongs = new ArrayList<>();
+    private final List<Song> homeSongs = new ArrayList<>();
+    private final List<Song> monthlyRankSongs = new ArrayList<>();
+    private final Map<String, List<ImageView>> songLoadingViews = new HashMap<>();
     private final List<MusicLanguage> languages = new ArrayList<>();
     private final List<MusicMenuAction> menuActions = new ArrayList<>();
+    private final Handler sleepTimerHandler = new Handler(Looper.getMainLooper());
     private LinearLayout songList;
+    private ScrollView mainScrollView;
     private ProgressBar progressBar;
     private ProgressBar playbackProgressBar;
     private TextView nowPlayingTitleView;
@@ -63,21 +84,36 @@ public class MainActivity extends Activity {
     private LinearLayout languageButton;
     private ImageView languageIcon;
     private TextView languageText;
+    private EditText searchInput;
+    private ImageView searchLoadingIcon;
+    private ImageButton searchClearButton;
+    private ImageButton searchMicButton;
     private LinearLayout playerBar;
     private ImageButton menuButton;
+    private ImageButton playlistButton;
     private ImageButton prevButton;
     private ImageButton playPauseButton;
     private ImageButton nextButton;
     private ImageButton infoButton;
     private ImageButton stopButton;
     private ImageView detailPlayIcon;
+    private AudioWaveView detailWaveView;
     private String detailSongId = "";
     private Song currentPlayingSong = null;
+    private String loadingSongId = "";
     private SharedPreferences appPrefs;
     private MediaController controller;
     private String currentLang = "en";
     private String lastHeading = "Bài hát mới";
+    private String currentHomeTab = "new";
     private boolean showingDetail = false;
+    private boolean showingHomeTabs = false;
+    private boolean detailBackToPlaylist = false;
+    private boolean searchLoading = false;
+    private boolean sleepTimerActive = false;
+    private boolean sleepTimerExitApp = false;
+    private int sleepTimerIndex = 2;
+    private Runnable sleepTimerRunnable = null;
 
     private final Player.Listener playerListener = new Player.Listener() {
         @Override
@@ -87,6 +123,9 @@ public class MainActivity extends Activity {
             }
             if (playbackProgressBar != null) {
                 playbackProgressBar.setVisibility(playbackState == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
+            }
+            if (playbackState == Player.STATE_READY || playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
+                setLoadingSong("");
             }
             updatePlayerState();
         }
@@ -128,9 +167,11 @@ public class MainActivity extends Activity {
     private void setupMenuActions() {
         menuActions.clear();
         menuActions.add(new MusicListMenuAction());
+        menuActions.add(new ArtistMenuAction());
         menuActions.add(new GenreMenuAction());
         menuActions.add(new MemoryMenuAction());
         menuActions.add(new TourismMenuAction());
+        menuActions.add(new SleepTimerMenuAction());
     }
 
     private void buildUi() {
@@ -157,6 +198,17 @@ public class MainActivity extends Activity {
         titleView.setTextSize(28);
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
         titleRow.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1));
+
+        playlistButton = new ImageButton(this);
+        playlistButton.setImageResource(R.drawable.playlist);
+        playlistButton.setColorFilter(Color.WHITE);
+        playlistButton.setBackgroundColor(Color.rgb(36, 17, 11));
+        playlistButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        playlistButton.setPadding(dp(9), dp(9), dp(9), dp(9));
+        LinearLayout.LayoutParams playlistParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+        playlistParams.setMargins(dp(8), 0, 0, 0);
+        titleRow.addView(playlistButton, playlistParams);
+        playlistButton.setOnClickListener(view -> renderPlaylistScreen());
 
         languageButton = new LinearLayout(this);
         languageButton.setGravity(Gravity.CENTER);
@@ -194,17 +246,23 @@ public class MainActivity extends Activity {
         subtitle.setPadding(0, dp(4), 0, dp(14));
         header.addView(subtitle);
 
-        EditText search = new EditText(this);
-        search.setSingleLine(true);
-        search.setHint("Tìm bài hát, nghệ sĩ, album...");
-        search.setTextColor(Color.WHITE);
-        search.setHintTextColor(Color.rgb(255, 215, 196));
-        search.setInputType(InputType.TYPE_CLASS_TEXT);
-        search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        search.setPadding(dp(14), 0, dp(14), 0);
-        search.setBackgroundColor(Color.rgb(36, 17, 11));
-        header.addView(search, new LinearLayout.LayoutParams(-1, dp(48)));
-        search.setOnEditorActionListener((view, actionId, event) -> {
+        LinearLayout searchBar = new LinearLayout(this);
+        searchBar.setGravity(Gravity.CENTER_VERTICAL);
+        searchBar.setPadding(dp(12), 0, dp(8), 0);
+        searchBar.setBackgroundColor(Color.rgb(36, 17, 11));
+        header.addView(searchBar, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        searchInput = new EditText(this);
+        searchInput.setSingleLine(true);
+        searchInput.setHint("Tìm bài hát, nghệ sĩ, album...");
+        searchInput.setTextColor(Color.WHITE);
+        searchInput.setHintTextColor(Color.rgb(255, 215, 196));
+        searchInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        searchInput.setPadding(0, 0, dp(8), 0);
+        searchInput.setBackgroundColor(Color.TRANSPARENT);
+        searchBar.addView(searchInput, new LinearLayout.LayoutParams(0, -1, 1));
+        searchInput.setOnEditorActionListener((view, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 String query = view.getText().toString().trim();
                 if (query.isEmpty()) {
@@ -216,16 +274,58 @@ public class MainActivity extends Activity {
             }
             return false;
         });
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+                updateSearchActions();
+            }
+
+            @Override
+            public void afterTextChanged(Editable editable) {
+            }
+        });
+
+        searchLoadingIcon = new ImageView(this);
+        searchLoadingIcon.setImageResource(R.drawable.waiting);
+        searchLoadingIcon.setColorFilter(Color.WHITE);
+        searchLoadingIcon.setVisibility(View.GONE);
+        searchBar.addView(searchLoadingIcon, new LinearLayout.LayoutParams(dp(32), dp(32)));
+
+        searchClearButton = new ImageButton(this);
+        searchClearButton.setImageResource(R.drawable.delete_search);
+        searchClearButton.setColorFilter(Color.WHITE);
+        searchClearButton.setBackgroundColor(Color.TRANSPARENT);
+        searchClearButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        searchClearButton.setPadding(dp(7), dp(7), dp(7), dp(7));
+        searchClearButton.setVisibility(View.GONE);
+        searchBar.addView(searchClearButton, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        searchClearButton.setOnClickListener(view -> {
+            searchInput.setText("");
+            loadHome();
+        });
+
+        searchMicButton = new ImageButton(this);
+        searchMicButton.setImageResource(R.drawable.microphone);
+        searchMicButton.setColorFilter(Color.WHITE);
+        searchMicButton.setBackgroundColor(Color.TRANSPARENT);
+        searchMicButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        searchMicButton.setPadding(dp(7), dp(7), dp(7), dp(7));
+        searchBar.addView(searchMicButton, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        searchMicButton.setOnClickListener(view -> startVoiceSearch());
 
         progressBar = new ProgressBar(this);
         page.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(3)));
 
-        ScrollView scrollView = new ScrollView(this);
+        mainScrollView = new ScrollView(this);
         songList = new LinearLayout(this);
         songList.setOrientation(LinearLayout.VERTICAL);
         songList.setPadding(dp(14), dp(14), dp(14), dp(104));
-        scrollView.addView(songList);
-        page.addView(scrollView, new LinearLayout.LayoutParams(-1, 0, 1));
+        mainScrollView.addView(songList);
+        page.addView(mainScrollView, new LinearLayout.LayoutParams(-1, 0, 1));
 
         playerBar = new LinearLayout(this);
         playerBar.setOrientation(LinearLayout.VERTICAL);
@@ -382,7 +482,7 @@ public class MainActivity extends Activity {
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(action.iconRes());
-        icon.setColorFilter(Color.WHITE);
+        icon.setColorFilter(action instanceof SleepTimerMenuAction && sleepTimerActive ? ACCENT : Color.WHITE);
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         iconBox.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
 
@@ -403,6 +503,143 @@ public class MainActivity extends Activity {
             action.open(this);
         });
         return row;
+    }
+
+    void showSleepTimerDialog() {
+        Dialog dialog = new Dialog(this);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(22), dp(18), dp(18));
+        panel.setBackgroundColor(BG);
+
+        TextView title = bodyText("Hẹn tắt nhạc", 21, TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setPadding(0, 0, 0, dp(14));
+        panel.addView(title);
+
+        Switch activeSwitch = new Switch(this);
+        activeSwitch.setText("Kích hoạt");
+        activeSwitch.setTextColor(TEXT);
+        activeSwitch.setTextSize(16);
+        activeSwitch.setTypeface(Typeface.DEFAULT_BOLD);
+        activeSwitch.setPadding(0, 0, 0, dp(14));
+        activeSwitch.setChecked(sleepTimerActive);
+        panel.addView(activeSwitch, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView timeLabel = bodyText(sleepTimerLabel(), 16, ACCENT);
+        timeLabel.setTypeface(Typeface.DEFAULT_BOLD);
+        timeLabel.setPadding(0, 0, 0, dp(10));
+        panel.addView(timeLabel);
+
+        SeekBar timerSlider = new SeekBar(this);
+        timerSlider.setMax(SLEEP_TIMER_MINUTES.length - 1);
+        timerSlider.setProgress(sleepTimerIndex);
+        panel.addView(timerSlider, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView actionLabel = bodyText("Khi đến giờ", 15, TEXT);
+        actionLabel.setTypeface(Typeface.DEFAULT_BOLD);
+        actionLabel.setPadding(0, dp(16), 0, dp(8));
+        panel.addView(actionLabel);
+
+        RadioGroup actionGroup = new RadioGroup(this);
+        actionGroup.setOrientation(RadioGroup.VERTICAL);
+        RadioButton stopMusic = new RadioButton(this);
+        stopMusic.setId(1001);
+        stopMusic.setText("Tắt nhạc");
+        stopMusic.setTextColor(TEXT);
+        stopMusic.setTextSize(15);
+        actionGroup.addView(stopMusic);
+        RadioButton closeApp = new RadioButton(this);
+        closeApp.setId(1002);
+        closeApp.setText("Tắt ứng dụng");
+        closeApp.setTextColor(TEXT);
+        closeApp.setTextSize(15);
+        actionGroup.addView(closeApp);
+        actionGroup.check(sleepTimerExitApp ? 1002 : 1001);
+        panel.addView(actionGroup, new LinearLayout.LayoutParams(-1, -2));
+
+        activeSwitch.setOnCheckedChangeListener((button, checked) -> {
+            sleepTimerActive = checked;
+            if (checked) {
+                scheduleSleepTimer();
+                Toast.makeText(this, "Đã kích hoạt hẹn tắt nhạc.", Toast.LENGTH_SHORT).show();
+            } else {
+                cancelSleepTimer();
+                Toast.makeText(this, "Đã tắt hẹn giờ.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        timerSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                sleepTimerIndex = progress;
+                timeLabel.setText(sleepTimerLabel());
+                if (sleepTimerActive && fromUser) {
+                    scheduleSleepTimer();
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+        actionGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            sleepTimerExitApp = checkedId == 1002;
+            if (sleepTimerActive) {
+                scheduleSleepTimer();
+            }
+        });
+
+        dialog.setContentView(panel);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(dp(320), WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private String sleepTimerLabel() {
+        int minutes = SLEEP_TIMER_MINUTES[Math.max(0, Math.min(sleepTimerIndex, SLEEP_TIMER_MINUTES.length - 1))];
+        if (minutes < 60) {
+            return minutes + " phút";
+        }
+        return (minutes / 60) + " tiếng";
+    }
+
+    private void scheduleSleepTimer() {
+        cancelSleepTimerRunnableOnly();
+        sleepTimerActive = true;
+        int minutes = SLEEP_TIMER_MINUTES[Math.max(0, Math.min(sleepTimerIndex, SLEEP_TIMER_MINUTES.length - 1))];
+        sleepTimerRunnable = () -> {
+            sleepTimerActive = false;
+            stopAndHidePlayer();
+            if (sleepTimerExitApp) {
+                if (Build.VERSION.SDK_INT >= 21) {
+                    finishAndRemoveTask();
+                } else {
+                    finish();
+                }
+            } else {
+                Toast.makeText(this, "Đã tắt nhạc theo hẹn giờ.", Toast.LENGTH_SHORT).show();
+            }
+        };
+        sleepTimerHandler.postDelayed(sleepTimerRunnable, minutes * 60L * 1000L);
+    }
+
+    private void cancelSleepTimer() {
+        sleepTimerActive = false;
+        cancelSleepTimerRunnableOnly();
+    }
+
+    private void cancelSleepTimerRunnableOnly() {
+        if (sleepTimerRunnable != null) {
+            sleepTimerHandler.removeCallbacks(sleepTimerRunnable);
+            sleepTimerRunnable = null;
+        }
     }
 
     private void connectController() {
@@ -439,23 +676,23 @@ public class MainActivity extends Activity {
 
     private void showLanguageChooser() {
         Dialog dialog = new Dialog(this);
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(16), dp(14), dp(16), dp(12));
-        box.setBackgroundColor(BG);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(24), dp(18), dp(18));
+        panel.setBackgroundColor(BG);
 
         TextView title = bodyText("Quốc gia + Ngôn ngữ", 20, TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setPadding(0, 0, 0, dp(12));
-        box.addView(title);
+        title.setPadding(0, 0, 0, dp(14));
+        panel.addView(title);
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(rows);
-        box.addView(scroll, new LinearLayout.LayoutParams(-1, dp(420)));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
-        for (MusicLanguage language : languages) {
+        for (MusicLanguage language : prioritizedLanguages()) {
             rows.addView(languageRow(language, dialog));
         }
 
@@ -465,26 +702,63 @@ public class MainActivity extends Activity {
             rows.addView(empty);
         }
 
-        dialog.setContentView(box);
+        dialog.setContentView(panel);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(dp(304), WindowManager.LayoutParams.MATCH_PARENT);
+            window.setGravity(Gravity.END);
+        }
         dialog.show();
+        Window shownWindow = dialog.getWindow();
+        if (shownWindow != null) {
+            shownWindow.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            shownWindow.setLayout(dp(304), WindowManager.LayoutParams.MATCH_PARENT);
+            shownWindow.setGravity(Gravity.END);
+        }
+    }
+
+    private List<MusicLanguage> prioritizedLanguages() {
+        List<MusicLanguage> ordered = new ArrayList<>(languages);
+        String selected = currentLang == null || currentLang.isEmpty() ? "en" : currentLang;
+        String system = Locale.getDefault().getLanguage();
+        ordered.sort((left, right) -> Integer.compare(languagePriority(left, selected, system), languagePriority(right, selected, system)));
+        return ordered;
+    }
+
+    private int languagePriority(MusicLanguage language, String selected, String system) {
+        String lang = language.lang == null ? "" : language.lang;
+        if (lang.equalsIgnoreCase(selected)) {
+            return 0;
+        }
+        if (!system.isEmpty() && lang.equalsIgnoreCase(system)) {
+            return 1;
+        }
+        return 2;
     }
 
     private View languageRow(MusicLanguage language, Dialog dialog) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(10), dp(9), dp(10), dp(9));
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
         row.setBackgroundColor(currentLang.equals(language.lang) ? Color.rgb(255, 240, 230) : CARD);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, 0, 0, dp(8));
+        params.setMargins(0, 0, 0, dp(10));
         row.setLayoutParams(params);
 
+        LinearLayout iconBox = new LinearLayout(this);
+        iconBox.setGravity(Gravity.CENTER);
+        iconBox.setBackgroundColor(Color.rgb(16, 11, 9));
+        row.addView(iconBox, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
         ImageView icon = new ImageView(this);
-        icon.setBackgroundColor(Color.rgb(255, 226, 209));
         icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        row.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        iconBox.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
         if (language.icon == null || language.icon.isEmpty()) {
             icon.setImageResource(R.drawable.country);
+            icon.setColorFilter(Color.WHITE);
         } else {
+            icon.clearColorFilter();
             imageLoader.load(language.icon, icon);
         }
 
@@ -531,13 +805,86 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void updateSearchActions() {
+        if (searchInput == null || searchClearButton == null) {
+            return;
+        }
+        boolean hasText = searchInput.getText() != null && searchInput.getText().toString().trim().length() > 0;
+        searchClearButton.setVisibility(hasText && !searchLoading ? View.VISIBLE : View.GONE);
+        if (searchMicButton != null) {
+            searchMicButton.setEnabled(!searchLoading);
+            searchMicButton.setAlpha(searchLoading ? 0.45f : 1f);
+        }
+    }
+
+    private void setSearchLoading(boolean loading) {
+        searchLoading = loading;
+        if (searchInput != null) {
+            searchInput.setEnabled(!loading);
+            searchInput.setAlpha(loading ? 0.65f : 1f);
+        }
+        if (searchLoadingIcon != null) {
+            searchLoadingIcon.setVisibility(loading ? View.VISIBLE : View.GONE);
+        }
+        updateSearchActions();
+    }
+
+    private void startVoiceSearch() {
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 21);
+            return;
+        }
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Tìm bài hát");
+        try {
+            startActivityForResult(intent, VOICE_SEARCH_REQUEST);
+        } catch (Exception e) {
+            Toast.makeText(this, "Thiết bị chưa hỗ trợ tìm kiếm giọng nói.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void loadHome() {
         showingDetail = false;
+        showingHomeTabs = true;
+        detailBackToPlaylist = false;
+        currentHomeTab = "new";
         progressBar.setVisibility(View.VISIBLE);
+        showListLoading("Đang tải bài hát mới...");
         repository.loadHome(currentLang, new MusicRepository.Callback() {
             @Override
             public void onSongs(List<Song> songs) {
-                runOnUiThread(() -> renderSongs("Bài hát mới", songs));
+                runOnUiThread(() -> {
+                    homeSongs.clear();
+                    homeSongs.addAll(songs);
+                    renderHomeTabs("new");
+                    loadMonthlyRank(false);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> showError(message));
+            }
+        });
+    }
+
+    private void loadMonthlyRank(boolean showWhenLoaded) {
+        if (showWhenLoaded) {
+            progressBar.setVisibility(View.VISIBLE);
+            showListLoading("Đang tải bảng xếp hạng tháng...");
+        }
+        repository.loadMonthlyRank(currentLang, new MusicRepository.Callback() {
+            @Override
+            public void onSongs(List<Song> songs) {
+                runOnUiThread(() -> {
+                    monthlyRankSongs.clear();
+                    monthlyRankSongs.addAll(songs);
+                    if (showWhenLoaded || "rank".equals(currentHomeTab)) {
+                        renderHomeTabs("rank");
+                    }
+                });
             }
 
             @Override
@@ -553,10 +900,14 @@ public class MainActivity extends Activity {
 
     void loadMenuItems(String heading, String action, int fallbackIconRes) {
         showingDetail = false;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
         detailPlayIcon = null;
+        detailWaveView = null;
         detailSongId = "";
         progressBar.setVisibility(View.VISIBLE);
-        repository.loadMenuItems(action, new MusicRepository.MenuItemCallback() {
+        showListLoading("Đang tải " + heading.toLowerCase(Locale.getDefault()) + "...");
+        repository.loadMenuItems(action, currentLang, new MusicRepository.MenuItemCallback() {
             @Override
             public void onItems(List<MenuListItem> items) {
                 runOnUiThread(() -> renderMenuItems(heading, items, fallbackIconRes));
@@ -571,29 +922,109 @@ public class MainActivity extends Activity {
 
     private void loadSearch(String query) {
         showingDetail = false;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
         progressBar.setVisibility(View.VISIBLE);
+        setSearchLoading(true);
+        showListLoading("Đang tìm bài hát...");
         repository.search(query, currentLang, new MusicRepository.Callback() {
             @Override
             public void onSongs(List<Song> songs) {
-                runOnUiThread(() -> renderSongs("Kết quả: " + query, songs));
+                runOnUiThread(() -> {
+                    setSearchLoading(false);
+                    renderSongs("Kết quả: " + query, songs);
+                });
             }
 
             @Override
             public void onError(String message) {
-                runOnUiThread(() -> showError(message));
+                runOnUiThread(() -> {
+                    setSearchLoading(false);
+                    showError(message);
+                });
             }
         });
+    }
+
+    private void showListLoading(String message) {
+        detailPlayIcon = null;
+        detailWaveView = null;
+        songLoadingViews.clear();
+        songList.removeAllViews();
+        scrollToTop();
+        songList.addView(loadingRow(message));
+    }
+
+    private View loadingRow(String message) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(14), dp(14), dp(14));
+        row.setBackgroundColor(CARD);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(10));
+        row.setLayoutParams(params);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.waiting);
+        icon.setColorFilter(ACCENT);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+        TextView text = bodyText(message, 15, MUTED);
+        text.setTypeface(Typeface.DEFAULT_BOLD);
+        text.setPadding(dp(12), 0, 0, 0);
+        row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
+        return row;
+    }
+
+    private void addResponsiveItems(List<View> items) {
+        if (!isLandscapeLayout()) {
+            for (View item : items) {
+                songList.addView(item);
+            }
+            return;
+        }
+        for (int i = 0; i < items.size(); i += 2) {
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.TOP);
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.setMargins(0, 0, 0, dp(10));
+            songList.addView(row, rowParams);
+
+            row.addView(items.get(i), twoColumnItemParams(false));
+            if (i + 1 < items.size()) {
+                row.addView(items.get(i + 1), twoColumnItemParams(true));
+            } else {
+                TextView spacer = new TextView(this);
+                row.addView(spacer, twoColumnItemParams(true));
+            }
+        }
+    }
+
+    private LinearLayout.LayoutParams twoColumnItemParams(boolean right) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1);
+        params.setMargins(right ? dp(6) : 0, 0, right ? 0 : dp(6), 0);
+        return params;
+    }
+
+    private boolean isLandscapeLayout() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
     }
 
     private void renderSongs(String heading, List<Song> songs) {
         progressBar.setVisibility(View.GONE);
         showingDetail = false;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
         detailPlayIcon = null;
+        detailWaveView = null;
         detailSongId = "";
         lastHeading = heading;
         currentSongs.clear();
         currentSongs.addAll(songs);
         songList.removeAllViews();
+        songLoadingViews.clear();
+        scrollToTop();
 
         songList.addView(heading(heading));
 
@@ -604,17 +1035,92 @@ public class MainActivity extends Activity {
             return;
         }
 
+        List<View> rows = new ArrayList<>();
         for (int i = 0; i < songs.size(); i++) {
-            songList.addView(songRow(songs.get(i), i));
+            rows.add(songRow(songs.get(i), i));
         }
+        addResponsiveItems(rows);
+    }
+
+    private void renderHomeTabs(String activeTab) {
+        progressBar.setVisibility(View.GONE);
+        showingDetail = false;
+        showingHomeTabs = true;
+        detailBackToPlaylist = false;
+        detailPlayIcon = null;
+        detailWaveView = null;
+        detailSongId = "";
+        currentHomeTab = activeTab == null || activeTab.isEmpty() ? "new" : activeTab;
+        lastHeading = "rank".equals(currentHomeTab) ? "Bảng xếp hạng tháng" : "Bài hát mới";
+        List<Song> songs = "rank".equals(currentHomeTab) ? monthlyRankSongs : homeSongs;
+        currentSongs.clear();
+        currentSongs.addAll(songs);
+        songList.removeAllViews();
+        songLoadingViews.clear();
+        scrollToTop();
+
+        songList.addView(homeTabs());
+
+        if (songs.isEmpty()) {
+            TextView empty = bodyText("Chưa tìm thấy bài hát có thể phát.", 16, MUTED);
+            empty.setPadding(dp(8), dp(28), dp(8), dp(28));
+            songList.addView(empty);
+            return;
+        }
+
+        List<View> rows = new ArrayList<>();
+        for (int i = 0; i < songs.size(); i++) {
+            rows.add(songRow(songs.get(i), i));
+        }
+        addResponsiveItems(rows);
+    }
+
+    private LinearLayout homeTabs() {
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setGravity(Gravity.CENTER_VERTICAL);
+        tabs.setPadding(0, 0, 0, dp(12));
+        tabs.addView(homeTabButton("Bài hát mới", "new"), new LinearLayout.LayoutParams(0, dp(46), 1));
+        LinearLayout.LayoutParams rankParams = new LinearLayout.LayoutParams(0, dp(46), 1);
+        rankParams.setMargins(dp(8), 0, 0, 0);
+        tabs.addView(homeTabButton("Bảng xếp hạng tháng", "rank"), rankParams);
+        return tabs;
+    }
+
+    private TextView homeTabButton(String text, String tab) {
+        boolean active = tab.equals(currentHomeTab);
+        TextView button = bodyText(text, 14, active ? Color.WHITE : ACCENT);
+        button.setGravity(Gravity.CENTER);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setBackground(roundedTopDrawable(active ? ACCENT : Color.rgb(255, 240, 230)));
+        button.setOnClickListener(view -> {
+            if ("rank".equals(tab) && monthlyRankSongs.isEmpty()) {
+                currentHomeTab = "rank";
+                loadMonthlyRank(true);
+                return;
+            }
+            renderHomeTabs(tab);
+        });
+        return button;
+    }
+
+    private GradientDrawable roundedTopDrawable(int color) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        float radius = dp(12);
+        drawable.setCornerRadii(new float[]{radius, radius, radius, radius, 0f, 0f, 0f, 0f});
+        return drawable;
     }
 
     private void renderMenuItems(String heading, List<MenuListItem> items, int fallbackIconRes) {
         progressBar.setVisibility(View.GONE);
         showingDetail = false;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
         lastHeading = heading;
         currentSongs.clear();
         songList.removeAllViews();
+        songLoadingViews.clear();
+        scrollToTop();
         songList.addView(heading(heading));
 
         if (items.isEmpty()) {
@@ -624,9 +1130,11 @@ public class MainActivity extends Activity {
             return;
         }
 
+        List<View> rows = new ArrayList<>();
         for (MenuListItem item : items) {
-            songList.addView(menuListItemRow(item, fallbackIconRes));
+            rows.add(menuListItemRow(item, fallbackIconRes));
         }
+        addResponsiveItems(rows);
     }
 
     private View menuListItemRow(MenuListItem item, int fallbackIconRes) {
@@ -664,6 +1172,169 @@ public class MainActivity extends Activity {
             subtitle.setPadding(0, dp(4), 0, 0);
             textBox.addView(subtitle);
         }
+        if ("artist".equals(item.type)) {
+            row.setOnClickListener(view -> loadArtistDetail(item.id));
+        }
+        return row;
+    }
+
+    private void renderPlaylistScreen() {
+        progressBar.setVisibility(View.GONE);
+        showingDetail = false;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
+        detailPlayIcon = null;
+        detailWaveView = null;
+        detailSongId = "";
+        lastHeading = "Playlist";
+        currentSongs.clear();
+        currentSongs.addAll(playlistManager.playlistItems());
+        songList.removeAllViews();
+        songLoadingViews.clear();
+        scrollToTop();
+
+        songList.addView(heading("Playlist"));
+
+        if (currentSongs.isEmpty()) {
+            TextView empty = bodyText("Chưa có bài hát nào trong playlist.", 16, MUTED);
+            empty.setPadding(dp(8), dp(28), dp(8), dp(28));
+            songList.addView(empty);
+            return;
+        }
+
+        List<View> rows = new ArrayList<>();
+        for (int i = 0; i < currentSongs.size(); i++) {
+            rows.add(playlistRow(currentSongs.get(i), i));
+        }
+        addResponsiveItems(rows);
+    }
+
+    private void loadArtistDetail(String artistId) {
+        if (artistId == null || artistId.trim().isEmpty()) {
+            Toast.makeText(this, "Chưa có thông tin nghệ sĩ.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        progressBar.setVisibility(View.VISIBLE);
+        showListLoading("Đang tải nghệ sĩ...");
+        repository.loadArtist(artistId, new MusicRepository.ArtistCallback() {
+            @Override
+            public void onArtist(Artist artist, List<Song> songs) {
+                runOnUiThread(() -> renderArtistDetail(artist, songs));
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> showError(message));
+            }
+        });
+    }
+
+    private void renderArtistDetail(Artist artist, List<Song> songs) {
+        progressBar.setVisibility(View.GONE);
+        showingDetail = true;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
+        detailPlayIcon = null;
+        detailWaveView = null;
+        detailSongId = "";
+        lastHeading = "Nghệ sĩ";
+        currentSongs.clear();
+        currentSongs.addAll(songs);
+        songList.removeAllViews();
+        songLoadingViews.clear();
+        scrollToTop();
+
+        LinearLayout back = backButton("Danh sách");
+        back.setOnClickListener(view -> renderSongs("Nghệ sĩ", new ArrayList<>(currentSongs)));
+        songList.addView(back);
+
+        ImageView avatar = new ImageView(this);
+        avatar.setBackgroundColor(Color.rgb(255, 226, 209));
+        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(-1, dp(300));
+        avatarParams.setMargins(0, 0, 0, dp(16));
+        songList.addView(avatar, avatarParams);
+        imageLoader.load(artist.avatar, avatar);
+
+        songList.addView(heading(artist.name.isEmpty() ? "Nghệ sĩ" : artist.name));
+        TagFlowLayout tags = new TagFlowLayout(this, dp(8), dp(8));
+        tags.setPadding(0, dp(4), 0, dp(8));
+        addTag(tags, "Bài hát", artist.songCount > 0 ? String.valueOf(artist.songCount) : String.valueOf(songs.size()));
+        addTag(tags, "Ngôn ngữ", artist.lang);
+        songList.addView(tags);
+
+        if (!artist.description.isEmpty()) {
+            songList.addView(sectionTitle("Mô tả"));
+            TextView description = bodyText(artist.description.replace("\\n", "\n"), 15, MUTED);
+            description.setLineSpacing(dp(3), 1.0f);
+            songList.addView(description);
+        }
+
+        songList.addView(sectionTitle("Bài hát của nghệ sĩ"));
+        if (songs.isEmpty()) {
+            TextView empty = bodyText("Nghệ sĩ này chưa có bài hát.", 16, MUTED);
+            empty.setPadding(dp(8), dp(18), dp(8), dp(24));
+            songList.addView(empty);
+            return;
+        }
+        List<View> rows = new ArrayList<>();
+        for (int i = 0; i < songs.size(); i++) {
+            rows.add(songRow(songs.get(i), i));
+        }
+        addResponsiveItems(rows);
+    }
+
+    private View playlistRow(Song song, int index) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        row.setBackgroundColor(CARD);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+        rowParams.setMargins(0, 0, 0, dp(10));
+        row.setLayoutParams(rowParams);
+
+        ImageView cover = new ImageView(this);
+        cover.setBackgroundColor(Color.rgb(255, 226, 209));
+        cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        row.addView(cover, new LinearLayout.LayoutParams(dp(58), dp(58)));
+        imageLoader.load(song.avatar, cover);
+
+        LinearLayout meta = new LinearLayout(this);
+        meta.setOrientation(LinearLayout.VERTICAL);
+        meta.setPadding(dp(12), 0, dp(8), 0);
+        row.addView(meta, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView name = bodyText(song.name, 16, TEXT);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        meta.addView(name);
+
+        TextView artist = bodyText(song.artist.isEmpty() ? "Heart Beat Play" : song.artist, 12, MUTED);
+        artist.setPadding(0, dp(4), 0, dp(6));
+        meta.addView(artist);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        meta.addView(actions);
+
+        actions.addView(smallIconButton(R.drawable.up_arrow, view -> {
+            playlistManager.moveUp(index);
+            renderPlaylistScreen();
+        }));
+        actions.addView(smallIconButton(R.drawable.down_arrow, view -> {
+            playlistManager.moveDown(index);
+            renderPlaylistScreen();
+        }));
+        actions.addView(smallIconButton(R.drawable.info, view -> {
+            detailBackToPlaylist = true;
+            showSongDetail(song, index);
+        }));
+        actions.addView(smallIconButton(R.drawable.delete, view -> {
+            playlistManager.removeAt(index);
+            updatePlaylistButtons();
+            renderPlaylistScreen();
+        }));
+
+        row.setOnClickListener(view -> playAt(index));
         return row;
     }
 
@@ -676,12 +1347,29 @@ public class MainActivity extends Activity {
         rowParams.setMargins(0, 0, 0, dp(10));
         row.setLayoutParams(rowParams);
 
+        FrameLayout coverFrame = new FrameLayout(this);
+        row.addView(coverFrame, new LinearLayout.LayoutParams(dp(72), dp(72)));
+
         ImageView cover = new ImageView(this);
         cover.setBackgroundColor(Color.rgb(255, 226, 209));
         cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        row.addView(cover, new LinearLayout.LayoutParams(dp(72), dp(72)));
+        coverFrame.addView(cover, new FrameLayout.LayoutParams(-1, -1));
         imageLoader.load(song.avatar, cover);
-        cover.setOnClickListener(view -> showSongDetail(song, index));
+
+        ImageView loading = new ImageView(this);
+        loading.setImageResource(R.drawable.waiting);
+        loading.setColorFilter(Color.WHITE);
+        loading.setBackgroundColor(Color.argb(122, 16, 11, 9));
+        loading.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        loading.setPadding(dp(18), dp(18), dp(18), dp(18));
+        loading.setVisibility(song.id.equals(loadingSongId) ? View.VISIBLE : View.GONE);
+        coverFrame.addView(loading, new FrameLayout.LayoutParams(-1, -1));
+        registerSongLoadingView(song.id, loading);
+
+        coverFrame.setOnClickListener(view -> {
+            detailBackToPlaylist = false;
+            showSongDetail(song, index);
+        });
 
         LinearLayout meta = new LinearLayout(this);
         meta.setOrientation(LinearLayout.VERTICAL);
@@ -717,22 +1405,63 @@ public class MainActivity extends Activity {
         return row;
     }
 
+    private void registerSongLoadingView(String songId, ImageView view) {
+        if (songId == null || songId.isEmpty()) {
+            return;
+        }
+        List<ImageView> views = songLoadingViews.get(songId);
+        if (views == null) {
+            views = new ArrayList<>();
+            songLoadingViews.put(songId, views);
+        }
+        views.add(view);
+    }
+
+    private void setLoadingSong(String songId) {
+        loadingSongId = songId == null ? "" : songId;
+        for (Map.Entry<String, List<ImageView>> entry : songLoadingViews.entrySet()) {
+            int visibility = entry.getKey().equals(loadingSongId) ? View.VISIBLE : View.GONE;
+            for (ImageView view : entry.getValue()) {
+                view.setVisibility(visibility);
+            }
+        }
+    }
+
     private void showSongDetail(Song song, int index) {
         showingDetail = true;
         progressBar.setVisibility(View.GONE);
         songList.removeAllViews();
+        scrollToTop();
 
         LinearLayout back = backButton(lastHeading);
-        back.setOnClickListener(view -> renderSongs(lastHeading, new ArrayList<>(currentSongs)));
+        back.setOnClickListener(view -> {
+            if (detailBackToPlaylist) {
+                renderPlaylistScreen();
+            } else if (showingHomeTabs) {
+                renderHomeTabs(currentHomeTab);
+            } else {
+                renderSongs(lastHeading, new ArrayList<>(currentSongs));
+            }
+        });
         songList.addView(back);
+
+        FrameLayout coverFrame = new FrameLayout(this);
+        LinearLayout.LayoutParams coverParams = new LinearLayout.LayoutParams(-1, dp(320));
+        coverParams.setMargins(0, 0, 0, dp(16));
+        songList.addView(coverFrame, coverParams);
 
         ImageView cover = new ImageView(this);
         cover.setBackgroundColor(Color.rgb(255, 226, 209));
         cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        LinearLayout.LayoutParams coverParams = new LinearLayout.LayoutParams(-1, dp(320));
-        coverParams.setMargins(0, 0, 0, dp(16));
-        songList.addView(cover, coverParams);
+        coverFrame.addView(cover, new FrameLayout.LayoutParams(-1, -1));
         imageLoader.load(song.avatar, cover);
+
+        detailWaveView = new AudioWaveView(this);
+        detailWaveView.setBackgroundColor(Color.argb(92, 16, 11, 9));
+        detailWaveView.setVisibility(View.GONE);
+        FrameLayout.LayoutParams waveParams = new FrameLayout.LayoutParams(dp(96), dp(58), Gravity.BOTTOM | Gravity.END);
+        waveParams.setMargins(0, 0, dp(14), dp(14));
+        coverFrame.addView(detailWaveView, waveParams);
 
         songList.addView(heading(song.name));
         songList.addView(songTagFlow(song));
@@ -792,7 +1521,13 @@ public class MainActivity extends Activity {
     private TagFlowLayout songTagFlow(Song song) {
         TagFlowLayout tags = new TagFlowLayout(this, dp(8), dp(8));
         tags.setPadding(0, dp(4), 0, dp(8));
-        addTag(tags, "Nghệ sĩ", song.artist.isEmpty() ? "Heart Beat Play" : song.artist);
+        addTag(tags, "Nghệ sĩ", song.artist.isEmpty() ? "Heart Beat Play" : song.artist, view -> {
+            if (song.artistId == null || song.artistId.isEmpty()) {
+                Toast.makeText(this, "Chưa có thông tin nghệ sĩ.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            loadArtistDetail(song.artistId);
+        });
         addTag(tags, "Album", song.album);
         addTag(tags, "Thể loại", song.genre);
         addTag(tags, "Năm", song.year);
@@ -802,6 +1537,10 @@ public class MainActivity extends Activity {
     }
 
     private void addTag(TagFlowLayout tags, String label, String value) {
+        addTag(tags, label, value, null);
+    }
+
+    private void addTag(TagFlowLayout tags, String label, String value, View.OnClickListener listener) {
         if (value == null || value.trim().isEmpty()) {
             return;
         }
@@ -810,6 +1549,9 @@ public class MainActivity extends Activity {
         tag.setPadding(dp(10), 0, dp(10), 0);
         tag.setGravity(Gravity.CENTER);
         tag.setBackgroundColor(Color.rgb(255, 240, 230));
+        if (listener != null) {
+            tag.setOnClickListener(listener);
+        }
         tags.addView(tag, new LinearLayout.LayoutParams(-2, dp(34)));
     }
 
@@ -875,6 +1617,20 @@ public class MainActivity extends Activity {
         return button;
     }
 
+    private ImageButton smallIconButton(int iconRes, View.OnClickListener listener) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(iconRes);
+        button.setColorFilter(Color.WHITE);
+        button.setBackgroundColor(Color.rgb(36, 17, 11));
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setPadding(dp(7), dp(7), dp(7), dp(7));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(34), dp(34));
+        params.setMargins(0, 0, dp(6), 0);
+        button.setLayoutParams(params);
+        button.setOnClickListener(listener);
+        return button;
+    }
+
     private TextView bodyText(String text, int size, int color) {
         TextView view = new TextView(this);
         view.setText(text);
@@ -907,8 +1663,9 @@ public class MainActivity extends Activity {
         }
         playerBar.setVisibility(View.VISIBLE);
         playbackProgressBar.setVisibility(View.VISIBLE);
+        setLoadingSong(song.id);
         List<MediaItem> mediaItems = buildPlaylistMediaItems();
-        int startIndex = Math.max(0, playlistManager.currentIndex());
+        int startIndex = playlistManager.isPlaylistActive() ? Math.max(0, playlistManager.currentIndex()) : 0;
         controller.setMediaItems(mediaItems, startIndex, 0);
         controller.prepare();
         controller.play();
@@ -980,7 +1737,7 @@ public class MainActivity extends Activity {
     }
 
     private void updatePlaylistButtons() {
-        int visibility = playlistManager.hasMultiple() ? View.VISIBLE : View.GONE;
+        int visibility = playlistManager.hasMultiple() && playlistManager.isPlaylistActive() ? View.VISIBLE : View.GONE;
         if (prevButton != null) {
             prevButton.setVisibility(visibility);
         }
@@ -1016,7 +1773,7 @@ public class MainActivity extends Activity {
         }
         playbackProgressBar.setVisibility(View.GONE);
         playerBar.setVisibility(View.GONE);
-        playlistManager.clear();
+        playlistManager.setSingle(null);
         updateNowPlaying(null);
         detailSongId = "";
         currentPlayingSong = null;
@@ -1033,6 +1790,7 @@ public class MainActivity extends Activity {
             currentSongs.add(0, currentPlayingSong);
             index = 0;
         }
+        detailBackToPlaylist = false;
         showSongDetail(currentPlayingSong, index);
     }
 
@@ -1072,11 +1830,25 @@ public class MainActivity extends Activity {
             detailSongIsPlaying = mediaId != null && mediaId.equals(detailSongId);
         }
         detailPlayIcon.setImageResource(detailSongIsPlaying ? R.drawable.pause : R.drawable.play);
+        if (detailWaveView != null) {
+            detailWaveView.setVisibility(detailSongIsPlaying ? View.VISIBLE : View.GONE);
+            if (detailSongIsPlaying) {
+                detailWaveView.start();
+            } else {
+                detailWaveView.stop();
+            }
+        }
     }
 
     private void showError(String message) {
         progressBar.setVisibility(View.GONE);
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void scrollToTop() {
+        if (mainScrollView != null) {
+            mainScrollView.post(() -> mainScrollView.scrollTo(0, 0));
+        }
     }
 
     private int dp(int value) {
@@ -1086,14 +1858,40 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (showingDetail) {
-            renderSongs(lastHeading, new ArrayList<>(currentSongs));
+            if (detailBackToPlaylist) {
+                renderPlaylistScreen();
+            } else if (showingHomeTabs) {
+                renderHomeTabs(currentHomeTab);
+            } else {
+                renderSongs(lastHeading, new ArrayList<>(currentSongs));
+            }
             return;
         }
         super.onBackPressed();
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != VOICE_SEARCH_REQUEST || resultCode != RESULT_OK || data == null) {
+            return;
+        }
+        ArrayList<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+        if (results == null || results.isEmpty()) {
+            return;
+        }
+        String query = results.get(0).trim();
+        if (query.isEmpty()) {
+            return;
+        }
+        searchInput.setText(query);
+        searchInput.setSelection(searchInput.getText().length());
+        loadSearch(query);
+    }
+
+    @Override
     protected void onDestroy() {
+        cancelSleepTimerRunnableOnly();
         if (controller != null) {
             controller.removeListener(playerListener);
             controller.release();

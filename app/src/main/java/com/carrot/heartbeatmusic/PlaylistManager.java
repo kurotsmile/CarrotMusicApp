@@ -7,15 +7,12 @@ import java.util.List;
 public class PlaylistManager {
     private final List<Song> songs = new ArrayList<>();
     private int currentIndex = -1;
+    private Song singleSong = null;
+    private boolean playlistActive = false;
 
     public void setSingle(Song song) {
-        songs.clear();
-        if (song != null) {
-            songs.add(song);
-            currentIndex = 0;
-        } else {
-            currentIndex = -1;
-        }
+        singleSong = song;
+        playlistActive = false;
     }
 
     public boolean add(Song song) {
@@ -44,10 +41,14 @@ public class PlaylistManager {
     public void setCurrentIndex(int index) {
         if (index >= 0 && index < songs.size()) {
             currentIndex = index;
+            playlistActive = true;
         }
     }
 
     public Song current() {
+        if (!playlistActive) {
+            return singleSong;
+        }
         if (currentIndex < 0 || currentIndex >= songs.size()) {
             return null;
         }
@@ -58,6 +59,7 @@ public class PlaylistManager {
         if (songs.isEmpty()) {
             return null;
         }
+        playlistActive = true;
         currentIndex = (currentIndex + 1) % songs.size();
         return current();
     }
@@ -66,6 +68,7 @@ public class PlaylistManager {
         if (songs.isEmpty()) {
             return null;
         }
+        playlistActive = true;
         currentIndex = (currentIndex - 1 + songs.size()) % songs.size();
         return current();
     }
@@ -78,12 +81,76 @@ public class PlaylistManager {
         return songs.size() > 1;
     }
 
+    public boolean isPlaylistActive() {
+        return playlistActive;
+    }
+
     public List<Song> items() {
+        if (!playlistActive) {
+            List<Song> queue = new ArrayList<>();
+            if (singleSong != null) {
+                queue.add(singleSong);
+            }
+            return Collections.unmodifiableList(queue);
+        }
         return Collections.unmodifiableList(songs);
+    }
+
+    public List<Song> playlistItems() {
+        return Collections.unmodifiableList(songs);
+    }
+
+    public boolean moveUp(int index) {
+        if (index <= 0 || index >= songs.size()) {
+            return false;
+        }
+        Collections.swap(songs, index, index - 1);
+        if (currentIndex == index) {
+            currentIndex = index - 1;
+        } else if (currentIndex == index - 1) {
+            currentIndex = index;
+        }
+        return true;
+    }
+
+    public boolean moveDown(int index) {
+        if (index < 0 || index >= songs.size() - 1) {
+            return false;
+        }
+        Collections.swap(songs, index, index + 1);
+        if (currentIndex == index) {
+            currentIndex = index + 1;
+        } else if (currentIndex == index + 1) {
+            currentIndex = index;
+        }
+        return true;
+    }
+
+    public boolean removeAt(int index) {
+        if (index < 0 || index >= songs.size()) {
+            return false;
+        }
+        Song removed = songs.remove(index);
+        if (singleSong != null && singleSong.id.equals(removed.id)) {
+            singleSong = null;
+        }
+        if (songs.isEmpty()) {
+            currentIndex = -1;
+            playlistActive = false;
+            return true;
+        }
+        if (currentIndex >= songs.size()) {
+            currentIndex = songs.size() - 1;
+        } else if (index < currentIndex) {
+            currentIndex--;
+        }
+        return true;
     }
 
     public void clear() {
         songs.clear();
         currentIndex = -1;
+        singleSong = null;
+        playlistActive = false;
     }
 }

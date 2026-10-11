@@ -27,18 +27,25 @@ Use `rg` or `find` with targeted paths before opening files.
 - `app/src/main/java/com/carrot/heartbeatmusic/Song.java`: song JSON model.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicLanguage.java`: language/country JSON model.
 - `app/src/main/java/com/carrot/heartbeatmusic/MenuListItem.java`: generic right-menu list item model.
+- `app/src/main/java/com/carrot/heartbeatmusic/Artist.java`: artist detail JSON model.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicMenuAction.java`: interface for a right-panel menu action.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicListMenuAction.java`: handles `Danh sách nhạc`.
+- `app/src/main/java/com/carrot/heartbeatmusic/ArtistMenuAction.java`: handles `Nghệ sĩ`.
 - `app/src/main/java/com/carrot/heartbeatmusic/GenreMenuAction.java`: handles `Thể loại`.
 - `app/src/main/java/com/carrot/heartbeatmusic/MemoryMenuAction.java`: handles `Ký ức âm nhạc`.
 - `app/src/main/java/com/carrot/heartbeatmusic/TourismMenuAction.java`: handles `Du lịch`.
-- `app/src/main/java/com/carrot/heartbeatmusic/PlaylistManager.java`: manages the in-app playlist queue, current index, and prev/next navigation.
+- `app/src/main/java/com/carrot/heartbeatmusic/SleepTimerMenuAction.java`: handles `Hẹn tắt nhạc`.
+- `app/src/main/java/com/carrot/heartbeatmusic/PlaylistManager.java`: manages added playlist songs, single-play state, current index, reorder/delete actions, and prev/next navigation.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicPlaybackService.java`: Media3 background playback service.
 - `app/src/main/java/com/carrot/heartbeatmusic/ImageLoader.java`: simple remote image loading helper.
 - `app/src/main/java/com/carrot/heartbeatmusic/TagFlowLayout.java`: wraps detail tag chips onto multiple lines.
+- `app/src/main/java/com/carrot/heartbeatmusic/AudioWaveView.java`: lightweight animated wave overlay for the currently playing detail cover.
 - `app/src/main/res/drawable/app_icon.png`: app icon copied from `icon.png`.
 - `app/src/main/res/drawable/back.png`: back button icon copied from `images/back.png`.
-- `app/src/main/res/drawable/add_to_playlist.png`, `next.png`, `prev.png`: playlist controls copied from `images/`.
+- `app/src/main/res/drawable/add_to_playlist.png`, `next.png`, `prev.png`, `playlist.png`, `up_arrow.png`, `down_arrow.png`, `delete.png`: playlist controls copied from `images/`.
+- `app/src/main/res/drawable/waiting.png`, `delete_search.png`, `microphone.png`: search bar controls copied from `images/`.
+- `app/src/main/res/drawable/singer.png`: artist menu icon copied from `images/singer.png`.
+- `app/src/main/res/drawable/cancel_alarm.png`: sleep timer menu icon copied from `images/cancel-alarm.png`.
 - `images/`: source images provided by the user.
 - `music_for_life.keystore`: existing keystore. Do not commit or expose passwords.
 
@@ -56,6 +63,9 @@ Useful API actions:
 - `action=search&q=...&lang=vi`
 - `action=languages`
 - `action=song&id=...`
+- `action=rank&month=YYYY-MM&lang=vi`
+- `action=artists&lang=vi`
+- `action=artist&id=123`
 - `action=genres`
 - `action=memories`
 - `action=tourism`

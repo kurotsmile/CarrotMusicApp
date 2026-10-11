@@ -13,8 +13,11 @@ import java.net.HttpURLConnection;
 import java.net.URLEncoder;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 public class MusicRepository {
     private static final long SONG_LIST_TTL_MS = 24L * 60L * 60L * 1000L;
@@ -40,20 +43,32 @@ public class MusicRepository {
         void onError(String message);
     }
 
+    public interface ArtistCallback {
+        void onArtist(Artist artist, List<Song> songs);
+        void onError(String message);
+    }
+
     public void loadHome(String lang, Callback callback) {
         String url = BuildConfig.MUSIC_API_BASE + "?action=home&limit=36&lang=" + encode(lang);
         load(url, "songs", "songs_home_v2_" + (lang == null || lang.isEmpty() ? "en" : lang), SONG_LIST_TTL_MS, callback);
+    }
+
+    public void loadMonthlyRank(String lang, Callback callback) {
+        String month = new SimpleDateFormat("yyyy-MM", Locale.US).format(new Date());
+        String normalizedLang = lang == null || lang.isEmpty() ? "en" : lang;
+        String url = BuildConfig.MUSIC_API_BASE + "?action=rank&limit=36&month=" + encode(month) + "&lang=" + encode(normalizedLang);
+        load(url, "songs", "songs_monthly_rank_v1_" + normalizedLang + "_" + month, SONG_LIST_TTL_MS, callback);
     }
 
     public void search(String query, String lang, Callback callback) {
         load(BuildConfig.MUSIC_API_BASE + "?action=search&limit=48&q=" + encode(query) + "&lang=" + encode(lang), "songs", "", 0, callback);
     }
 
-    public void loadMenuItems(String action, MenuItemCallback callback) {
+    public void loadMenuItems(String action, String lang, MenuItemCallback callback) {
         new Thread(() -> {
             HttpURLConnection connection = null;
             try {
-                connection = (HttpURLConnection) new URL(BuildConfig.MUSIC_API_BASE + "?action=" + encode(action) + "&limit=60").openConnection();
+                connection = (HttpURLConnection) new URL(BuildConfig.MUSIC_API_BASE + "?action=" + encode(action) + "&limit=60&lang=" + encode(lang)).openConnection();
                 connection.setConnectTimeout(12000);
                 connection.setReadTimeout(16000);
                 connection.setRequestProperty("Accept", "application/json");
@@ -61,6 +76,33 @@ public class MusicRepository {
                 callback.onItems(parseMenuItems(body));
             } catch (Exception e) {
                 callback.onError(e.getMessage() == null ? "Can not load menu" : e.getMessage());
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+        }).start();
+    }
+
+    public void loadArtist(String artistId, ArtistCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(BuildConfig.MUSIC_API_BASE + "?action=artist&id=" + encode(artistId) + "&limit=60").openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(16000);
+                connection.setRequestProperty("Accept", "application/json");
+                int code = connection.getResponseCode();
+                InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+                String body = readAll(stream);
+                JSONObject root = new JSONObject(body);
+                if (!root.optBoolean("ok", false)) {
+                    callback.onError(root.optString("error", "Can not load artist"));
+                    return;
+                }
+                callback.onArtist(new Artist(root.optJSONObject("artist") == null ? new JSONObject() : root.optJSONObject("artist")), parseSongs(body, "songs"));
+            } catch (Exception e) {
+                callback.onError(e.getMessage() == null ? "Can not load artist" : e.getMessage());
             } finally {
                 if (connection != null) {
                     connection.disconnect();
