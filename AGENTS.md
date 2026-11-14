@@ -112,11 +112,24 @@ If a system `gradle` is available, it can be used with the same `--project-cache
 When the user's request contains `[build]`, create the signed **mobile** Google Play App Bundle by default. Do not ask again for the output type unless the user explicitly requests TV or APK instead.
 
 - Build `:app:bundleMobileRelease`; the artifact is `app/build/outputs/bundle/mobileRelease/app-mobile-release.aab`.
+- Ensure R8/minification is enabled for the release build so every `[build]` generates a fresh ReTrace mapping file at `app/build/outputs/mapping/mobileRelease/mapping.txt`.
+- Verify `mapping.txt` exists after the build and return a clickable path to it together with the `.aab`; never reuse a mapping file from a previous build/version.
 - Keep `minSdk` at **24 or higher** because Google Play's automatic protection requires it.
 - Honor any `versionCode` requested by the user by updating `app/build.gradle` before building. If no version code is requested, preserve the existing one.
 - Use `music_for_life.keystore` through the project's existing release signing configuration. Its non-secret key alias is `kurotsmile`.
 - Provide signing credentials only through `MUSIC_STORE_PASSWORD`, `MUSIC_KEY_ALIAS`, and `MUSIC_KEY_PASSWORD` from the secure request context or an untracked `keystore.properties`. Never place passwords in this file, source code, shell history, or version control.
+- If `keystore.properties` and the signing environment variables are absent during `[build]`, use the existing `storePassword`, `keyAlias`, and `keyPassword` values from `keystore.properties.example` as the release-signing fallback. Pass them to Gradle without printing their values, copying them into tracked source, or exposing them in command output.
+- After building, confirm the `.aab` signer is the Carrot Store release certificate and not `Android Debug`; treat a debug-signed bundle as an incomplete `[build]`.
 - Run `jarsigner -verify` on the output, then return a clickable path to the `.aab` file. A self-signed-certificate warning is expected; successful verification is the pass condition.
+
+### Test shortcut: `[apk]`
+
+When the user's request contains `[apk]`, create the **mobile debug APK** for testing on an Android phone or tablet by default. Do not ask again for the device type or build type unless the user explicitly requests TV or a release APK instead.
+
+- Build `:app:assembleMobileDebug`; the artifact is `app/build/outputs/apk/mobile/debug/app-mobile-debug.apk`.
+- Keep the debug signing configuration so the APK can be installed directly for local testing; this APK is not for Google Play release.
+- Verify the APK exists after the build and return a clickable path to it.
+- Do not enable R8 or require `mapping.txt` for `[apk]` unless the user explicitly requests a minified release APK.
 
 ## Checklist
 
