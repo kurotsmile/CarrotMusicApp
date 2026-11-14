@@ -21,9 +21,9 @@ android {
 
     defaultConfig {
         applicationId "com.carrot.heartbeatmusic"
-        minSdk 23
+        minSdk 24
         targetSdk 35
-        versionCode 1
+        versionCode 3
         versionName "1.0.0"
         buildConfigField "String", "MUSIC_API_BASE", "\"https://heartbeatplay.com/api.php\""
     }

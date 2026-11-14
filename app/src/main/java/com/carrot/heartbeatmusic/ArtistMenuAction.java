@@ -3,12 +3,12 @@ package com.carrot.heartbeatmusic;
 public class ArtistMenuAction implements MusicMenuAction {
     @Override
     public String title() {
-        return "Nghệ sĩ";
+        return "Artists";
     }
 
     @Override
     public String subtitle() {
-        return "Khám phá nghệ sĩ và bài hát liên quan";
+        return "Explore artists and related songs";
     }
 
     @Override
@@ -18,6 +18,6 @@ public class ArtistMenuAction implements MusicMenuAction {
 
     @Override
     public void open(MainActivity activity) {
-        activity.loadMenuItems("Nghệ sĩ", "artists", R.drawable.singer);
+        activity.loadMenuItems("Artists", "artists", R.drawable.singer);
     }
 }

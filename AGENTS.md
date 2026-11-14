@@ -28,7 +28,9 @@ Use `rg` or `find` with targeted paths before opening files.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicLanguage.java`: language/country JSON model.
 - `app/src/main/java/com/carrot/heartbeatmusic/MenuListItem.java`: generic right-menu list item model.
 - `app/src/main/java/com/carrot/heartbeatmusic/Artist.java`: artist detail JSON model.
+- `app/src/main/java/com/carrot/heartbeatmusic/CloudPlaylist.java`: cloud playlist JSON model loaded after account login.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicMenuAction.java`: interface for a right-panel menu action.
+- `app/src/main/java/com/carrot/heartbeatmusic/ProfileMenuAction.java`: handles account login/profile and cloud playlist panel.
 - `app/src/main/java/com/carrot/heartbeatmusic/MusicListMenuAction.java`: handles `Danh sách nhạc`.
 - `app/src/main/java/com/carrot/heartbeatmusic/ArtistMenuAction.java`: handles `Nghệ sĩ`.
 - `app/src/main/java/com/carrot/heartbeatmusic/GenreMenuAction.java`: handles `Thể loại`.
@@ -45,6 +47,8 @@ Use `rg` or `find` with targeted paths before opening files.
 - `app/src/main/res/drawable/add_to_playlist.png`, `next.png`, `prev.png`, `playlist.png`, `up_arrow.png`, `down_arrow.png`, `delete.png`: playlist controls copied from `images/`.
 - `app/src/main/res/drawable/waiting.png`, `delete_search.png`, `microphone.png`: search bar controls copied from `images/`.
 - `app/src/main/res/drawable/singer.png`: artist menu icon copied from `images/singer.png`.
+- `app/src/main/res/drawable/profile.png`, `user_login.png`: profile menu login-state icons copied from `images/`.
+- `app/src/main/res/drawable/carrot_28.png`: Carrot28 logo for the in-app login/register panel.
 - `app/src/main/res/drawable/cancel_alarm.png`: sleep timer menu icon copied from `images/cancel-alarm.png`.
 - `images/`: source images provided by the user.
 - `music_for_life.keystore`: existing keystore. Do not commit or expose passwords.
@@ -67,8 +71,17 @@ Useful API actions:
 - `action=artists&lang=vi`
 - `action=artist&id=123`
 - `action=genres`
+- `action=genre_songs&id=<genre>&lang=vi`
 - `action=memories`
+- `action=year_songs&id=2024&lang=vi`
 - `action=tourism`
+- `action=country_songs&id=vi`
+- `action=register`: POST name/email/password/password_confirm; creates a user account and starts the PHP session for app playlist sync.
+
+Account/profile uses CarrotMusic session endpoints beside `api.php`:
+
+- `login-email.php`: POST email/password; keeps the PHP session cookie in the Android process.
+- `playlist.php?action=list`: lists cloud playlists for the logged-in session.
 
 ## Existing Helpers To Reuse
 
@@ -78,6 +91,7 @@ Useful API actions:
 - Use `Song` and `MusicLanguage` models rather than parsing JSON inside UI code.
 - Use `MenuListItem` for right-panel menu lists.
 - Put right-panel menu behavior in its own `*MenuAction.java` file.
+- Use `CloudPlaylist` and `MusicRepository.loadCloudPlaylists` for profile/cloud playlist rows instead of parsing playlist JSON in UI code.
 - Use `PlaylistManager` for add-to-playlist, current queue, and prev/next state.
 - Use `playAt()` / `playPlaylistCurrent()` in `MainActivity` to start playback so media metadata, notification, and lock-screen playback stay consistent.
 - If API menu items have no avatar, render the matching local icon from `app/src/main/res/drawable/`.
@@ -92,6 +106,17 @@ GRADLE_USER_HOME=/tmp/gradle-user-home /tmp/gradle-8.10.2/bin/gradle --no-daemon
 ```
 
 If a system `gradle` is available, it can be used with the same `--project-cache-dir`.
+
+### Release shortcut: `[build]`
+
+When the user's request contains `[build]`, create the signed **mobile** Google Play App Bundle by default. Do not ask again for the output type unless the user explicitly requests TV or APK instead.
+
+- Build `:app:bundleMobileRelease`; the artifact is `app/build/outputs/bundle/mobileRelease/app-mobile-release.aab`.
+- Keep `minSdk` at **24 or higher** because Google Play's automatic protection requires it.
+- Honor any `versionCode` requested by the user by updating `app/build.gradle` before building. If no version code is requested, preserve the existing one.
+- Use `music_for_life.keystore` through the project's existing release signing configuration. Its non-secret key alias is `kurotsmile`.
+- Provide signing credentials only through `MUSIC_STORE_PASSWORD`, `MUSIC_KEY_ALIAS`, and `MUSIC_KEY_PASSWORD` from the secure request context or an untracked `keystore.properties`. Never place passwords in this file, source code, shell history, or version control.
+- Run `jarsigner -verify` on the output, then return a clickable path to the `.aab` file. A self-signed-certificate warning is expected; successful verification is the pass condition.
 
 ## Checklist
 

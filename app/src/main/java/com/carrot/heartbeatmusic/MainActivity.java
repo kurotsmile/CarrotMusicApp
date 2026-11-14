@@ -12,6 +12,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -104,12 +105,16 @@ public class MainActivity extends Activity {
     private SharedPreferences appPrefs;
     private MediaController controller;
     private String currentLang = "en";
-    private String lastHeading = "Bài hát mới";
+    private String lastHeading = "New songs";
     private String currentHomeTab = "new";
     private boolean showingDetail = false;
     private boolean showingHomeTabs = false;
     private boolean detailBackToPlaylist = false;
+    private boolean currentListHasHomeBack = false;
     private boolean searchLoading = false;
+    private boolean accountLoggedIn = false;
+    private String accountName = "";
+    private String accountEmail = "";
     private boolean sleepTimerActive = false;
     private boolean sleepTimerExitApp = false;
     private int sleepTimerIndex = 2;
@@ -157,6 +162,9 @@ public class MainActivity extends Activity {
         repository = new MusicRepository(this);
         appPrefs = getSharedPreferences("heartbeat_music_app", MODE_PRIVATE);
         currentLang = appPrefs.getString("selected_lang", "en");
+        accountLoggedIn = appPrefs.getBoolean("account_logged_in", false);
+        accountName = appPrefs.getString("account_name", "");
+        accountEmail = appPrefs.getString("account_email", "");
         setupMenuActions();
         buildUi();
         connectController();
@@ -166,6 +174,7 @@ public class MainActivity extends Activity {
 
     private void setupMenuActions() {
         menuActions.clear();
+        menuActions.add(new ProfileMenuAction());
         menuActions.add(new MusicListMenuAction());
         menuActions.add(new ArtistMenuAction());
         menuActions.add(new GenreMenuAction());
@@ -240,7 +249,7 @@ public class MainActivity extends Activity {
         menuButton.setOnClickListener(view -> showMainMenuPanel());
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Heart Beat Play trong giao diện Android native");
+        subtitle.setText("A warm place for songs, memories, and music from around the world.");
         subtitle.setTextColor(Color.rgb(255, 207, 189));
         subtitle.setTextSize(14);
         subtitle.setPadding(0, dp(4), 0, dp(14));
@@ -254,7 +263,7 @@ public class MainActivity extends Activity {
 
         searchInput = new EditText(this);
         searchInput.setSingleLine(true);
-        searchInput.setHint("Tìm bài hát, nghệ sĩ, album...");
+        searchInput.setHint("Search songs, artists, albums...");
         searchInput.setTextColor(Color.WHITE);
         searchInput.setHintTextColor(Color.rgb(255, 215, 196));
         searchInput.setInputType(InputType.TYPE_CLASS_TEXT);
@@ -395,7 +404,7 @@ public class MainActivity extends Activity {
         playerContent.addView(nowPlayingBox, new LinearLayout.LayoutParams(0, -2, 1));
 
         nowPlayingTitleView = new TextView(this);
-        nowPlayingTitleView.setText("Chọn một bài hát để phát");
+        nowPlayingTitleView.setText("Choose a song to play");
         nowPlayingTitleView.setTextColor(Color.WHITE);
         nowPlayingTitleView.setTextSize(15);
         nowPlayingTitleView.setTypeface(Typeface.DEFAULT_BOLD);
@@ -477,11 +486,12 @@ public class MainActivity extends Activity {
 
         LinearLayout iconBox = new LinearLayout(this);
         iconBox.setGravity(Gravity.CENTER);
-        iconBox.setBackgroundColor(Color.rgb(16, 11, 9));
+        boolean profileAction = action instanceof ProfileMenuAction;
+        iconBox.setBackgroundColor(profileAction && accountLoggedIn ? ACCENT : Color.rgb(16, 11, 9));
         row.addView(iconBox, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
         ImageView icon = new ImageView(this);
-        icon.setImageResource(action.iconRes());
+        icon.setImageResource(profileAction && accountLoggedIn ? R.drawable.user_login : action.iconRes());
         icon.setColorFilter(action instanceof SleepTimerMenuAction && sleepTimerActive ? ACCENT : Color.WHITE);
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         iconBox.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
@@ -505,6 +515,250 @@ public class MainActivity extends Activity {
         return row;
     }
 
+    void showProfileDialog() {
+        showProfileDialog(false);
+    }
+
+    private void showProfileDialog(boolean registerMode) {
+        Dialog dialog = new Dialog(this);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(24), dp(18), dp(18));
+        panel.setBackgroundColor(Color.WHITE);
+
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.carrot_28);
+        logo.setAdjustViewBounds(true);
+        logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(-1, dp(72));
+        logoParams.setMargins(0, 0, 0, dp(10));
+        panel.addView(logo, logoParams);
+
+        TextView title = bodyText(accountLoggedIn ? "Profile" : (registerMode ? "Create account" : "Sign in"), 21, TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, 0, 0, dp(8));
+        panel.addView(title);
+
+        if (accountLoggedIn) {
+            TextView name = bodyText(accountName.isEmpty() ? accountEmail : accountName, 17, TEXT);
+            name.setTypeface(Typeface.DEFAULT_BOLD);
+            name.setGravity(Gravity.CENTER);
+            panel.addView(name);
+            TextView email = bodyText(accountEmail, 13, MUTED);
+            email.setGravity(Gravity.CENTER);
+            email.setPadding(0, dp(4), 0, dp(16));
+            panel.addView(email);
+
+            TextView cloudTitle = bodyText("Cloud playlists", 16, ACCENT);
+            cloudTitle.setTypeface(Typeface.DEFAULT_BOLD);
+            cloudTitle.setPadding(0, 0, 0, dp(8));
+            panel.addView(cloudTitle);
+
+            LinearLayout cloudList = new LinearLayout(this);
+            cloudList.setOrientation(LinearLayout.VERTICAL);
+            panel.addView(cloudList, new LinearLayout.LayoutParams(-1, -2));
+            cloudList.addView(loadingRow("Loading cloud playlists..."));
+            repository.loadCloudPlaylists(new MusicRepository.CloudPlaylistCallback() {
+                @Override
+                public void onPlaylists(List<CloudPlaylist> playlists) {
+                    runOnUiThread(() -> {
+                        cloudList.removeAllViews();
+                        if (playlists.isEmpty()) {
+                            cloudList.addView(bodyText("No cloud playlists yet.", 15, MUTED));
+                            return;
+                        }
+                        for (CloudPlaylist playlist : playlists) {
+                            cloudList.addView(cloudPlaylistRow(playlist));
+                        }
+                    });
+                }
+
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        cloudList.removeAllViews();
+                        cloudList.addView(bodyText(message, 15, MUTED));
+                    });
+                }
+            });
+
+            TextView logout = profileActionButton("Sign out", Color.rgb(36, 17, 11), Color.WHITE);
+            LinearLayout.LayoutParams logoutParams = new LinearLayout.LayoutParams(-1, dp(46));
+            logoutParams.setMargins(0, dp(16), 0, 0);
+            panel.addView(logout, logoutParams);
+            logout.setOnClickListener(view -> {
+                accountLoggedIn = false;
+                accountName = "";
+                accountEmail = "";
+                appPrefs.edit()
+                        .putBoolean("account_logged_in", false)
+                        .remove("account_name")
+                        .remove("account_email")
+                        .apply();
+                repository.clearSession();
+                dialog.dismiss();
+                Toast.makeText(this, "Signed out.", Toast.LENGTH_SHORT).show();
+            });
+        } else {
+            LinearLayout tabs = new LinearLayout(this);
+            tabs.setGravity(Gravity.CENTER);
+            tabs.setPadding(0, 0, 0, dp(12));
+            panel.addView(tabs, new LinearLayout.LayoutParams(-1, -2));
+            TextView loginTab = profileActionButton("Login", registerMode ? Color.rgb(255, 240, 230) : ACCENT, registerMode ? ACCENT : Color.WHITE);
+            TextView registerTab = profileActionButton("Register", registerMode ? ACCENT : Color.rgb(255, 240, 230), registerMode ? Color.WHITE : ACCENT);
+            tabs.addView(loginTab, new LinearLayout.LayoutParams(0, dp(40), 1));
+            LinearLayout.LayoutParams registerTabParams = new LinearLayout.LayoutParams(0, dp(40), 1);
+            registerTabParams.setMargins(dp(8), 0, 0, 0);
+            tabs.addView(registerTab, registerTabParams);
+            loginTab.setOnClickListener(view -> {
+                dialog.dismiss();
+                showProfileDialog(false);
+            });
+            registerTab.setOnClickListener(view -> {
+                dialog.dismiss();
+                showProfileDialog(true);
+            });
+
+            EditText nameInput = null;
+            if (registerMode) {
+                nameInput = profileInput("Name", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PERSON_NAME);
+                panel.addView(nameInput, new LinearLayout.LayoutParams(-1, dp(48)));
+            }
+            EditText emailInput = profileInput("Email", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+            LinearLayout.LayoutParams emailParams = new LinearLayout.LayoutParams(-1, dp(48));
+            emailParams.setMargins(0, registerMode ? dp(10) : 0, 0, 0);
+            panel.addView(emailInput, emailParams);
+            EditText passwordInput = profileInput("Password", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            LinearLayout.LayoutParams passwordParams = new LinearLayout.LayoutParams(-1, dp(48));
+            passwordParams.setMargins(0, dp(10), 0, 0);
+            panel.addView(passwordInput, passwordParams);
+
+            EditText confirmInput = null;
+            if (registerMode) {
+                confirmInput = profileInput("Confirm password", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+                LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(-1, dp(48));
+                confirmParams.setMargins(0, dp(10), 0, 0);
+                panel.addView(confirmInput, confirmParams);
+            }
+
+            TextView submit = profileActionButton(registerMode ? "Create account" : "Sign in", ACCENT, Color.WHITE);
+            LinearLayout.LayoutParams submitParams = new LinearLayout.LayoutParams(-1, dp(46));
+            submitParams.setMargins(0, dp(14), 0, 0);
+            panel.addView(submit, submitParams);
+            EditText finalNameInput = nameInput;
+            EditText finalConfirmInput = confirmInput;
+            submit.setOnClickListener(view -> {
+                String name = finalNameInput == null || finalNameInput.getText() == null ? "" : finalNameInput.getText().toString().trim();
+                String email = emailInput.getText() == null ? "" : emailInput.getText().toString().trim();
+                String password = passwordInput.getText() == null ? "" : passwordInput.getText().toString();
+                String confirm = finalConfirmInput == null || finalConfirmInput.getText() == null ? password : finalConfirmInput.getText().toString();
+                if (email.isEmpty() || password.isEmpty()) {
+                    Toast.makeText(this, "Please enter your email and password.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (registerMode && name.isEmpty()) {
+                    Toast.makeText(this, "Please enter your name.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                submit.setEnabled(false);
+                submit.setText(registerMode ? "Creating account..." : "Signing in...");
+                MusicRepository.AccountCallback callback = new MusicRepository.AccountCallback() {
+                    @Override
+                    public void onAccount(String name, String email) {
+                        runOnUiThread(() -> {
+                            accountLoggedIn = true;
+                            accountName = name == null ? "" : name;
+                            accountEmail = email == null ? "" : email;
+                            appPrefs.edit()
+                                    .putBoolean("account_logged_in", true)
+                                    .putString("account_name", accountName)
+                                    .putString("account_email", accountEmail)
+                                    .apply();
+                            dialog.dismiss();
+                            showProfileDialog();
+                        });
+                    }
+
+                    @Override
+                    public void onError(String message) {
+                        runOnUiThread(() -> {
+                            submit.setEnabled(true);
+                            submit.setText(registerMode ? "Create account" : "Sign in");
+                            Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                        });
+                    }
+                };
+                if (registerMode) {
+                    repository.register(name, email, password, confirm, callback);
+                } else {
+                    repository.login(email, password, callback);
+                }
+            });
+        }
+
+        dialog.setContentView(panel);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setGravity(Gravity.END);
+            window.setLayout(dp(330), WindowManager.LayoutParams.MATCH_PARENT);
+        }
+    }
+
+    private EditText profileInput(String hint, int inputType) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint(hint);
+        input.setInputType(inputType);
+        input.setTextColor(TEXT);
+        input.setHintTextColor(MUTED);
+        input.setPadding(dp(12), 0, dp(12), 0);
+        input.setBackgroundColor(Color.rgb(255, 247, 242));
+        return input;
+    }
+
+    private TextView profileActionButton(String text, int background, int color) {
+        TextView button = bodyText(text, 15, color);
+        button.setGravity(Gravity.CENTER);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setBackgroundColor(background);
+        return button;
+    }
+
+    private View cloudPlaylistRow(CloudPlaylist playlist) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setBackgroundColor(Color.rgb(255, 247, 242));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(8));
+        row.setLayoutParams(params);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.playlist);
+        icon.setColorFilter(Color.WHITE);
+        icon.setBackgroundColor(ACCENT);
+        icon.setPadding(dp(9), dp(9), dp(9), dp(9));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        LinearLayout textBox = new LinearLayout(this);
+        textBox.setOrientation(LinearLayout.VERTICAL);
+        textBox.setPadding(dp(12), 0, 0, 0);
+        row.addView(textBox, new LinearLayout.LayoutParams(0, -2, 1));
+
+        TextView name = bodyText(playlist.name.isEmpty() ? "Playlist" : playlist.name, 15, TEXT);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        textBox.addView(name);
+        String subtitle = playlist.songCount + " songs";
+        if (!playlist.description.isEmpty()) {
+            subtitle += " · " + playlist.description;
+        }
+        textBox.addView(bodyText(subtitle, 12, MUTED));
+        return row;
+    }
+
     void showSleepTimerDialog() {
         Dialog dialog = new Dialog(this);
         LinearLayout panel = new LinearLayout(this);
@@ -512,13 +766,13 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(18), dp(22), dp(18), dp(18));
         panel.setBackgroundColor(BG);
 
-        TextView title = bodyText("Hẹn tắt nhạc", 21, TEXT);
+        TextView title = bodyText("Sleep Timer", 21, TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setPadding(0, 0, 0, dp(14));
         panel.addView(title);
 
         Switch activeSwitch = new Switch(this);
-        activeSwitch.setText("Kích hoạt");
+        activeSwitch.setText("Enable");
         activeSwitch.setTextColor(TEXT);
         activeSwitch.setTextSize(16);
         activeSwitch.setTypeface(Typeface.DEFAULT_BOLD);
@@ -536,7 +790,7 @@ public class MainActivity extends Activity {
         timerSlider.setProgress(sleepTimerIndex);
         panel.addView(timerSlider, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView actionLabel = bodyText("Khi đến giờ", 15, TEXT);
+        TextView actionLabel = bodyText("When time is up", 15, TEXT);
         actionLabel.setTypeface(Typeface.DEFAULT_BOLD);
         actionLabel.setPadding(0, dp(16), 0, dp(8));
         panel.addView(actionLabel);
@@ -545,13 +799,13 @@ public class MainActivity extends Activity {
         actionGroup.setOrientation(RadioGroup.VERTICAL);
         RadioButton stopMusic = new RadioButton(this);
         stopMusic.setId(1001);
-        stopMusic.setText("Tắt nhạc");
+        stopMusic.setText("Stop music");
         stopMusic.setTextColor(TEXT);
         stopMusic.setTextSize(15);
         actionGroup.addView(stopMusic);
         RadioButton closeApp = new RadioButton(this);
         closeApp.setId(1002);
-        closeApp.setText("Tắt ứng dụng");
+        closeApp.setText("Close app");
         closeApp.setTextColor(TEXT);
         closeApp.setTextSize(15);
         actionGroup.addView(closeApp);
@@ -562,10 +816,10 @@ public class MainActivity extends Activity {
             sleepTimerActive = checked;
             if (checked) {
                 scheduleSleepTimer();
-                Toast.makeText(this, "Đã kích hoạt hẹn tắt nhạc.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Sleep timer enabled.", Toast.LENGTH_SHORT).show();
             } else {
                 cancelSleepTimer();
-                Toast.makeText(this, "Đã tắt hẹn giờ.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Sleep timer disabled.", Toast.LENGTH_SHORT).show();
             }
         });
         timerSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -605,9 +859,9 @@ public class MainActivity extends Activity {
     private String sleepTimerLabel() {
         int minutes = SLEEP_TIMER_MINUTES[Math.max(0, Math.min(sleepTimerIndex, SLEEP_TIMER_MINUTES.length - 1))];
         if (minutes < 60) {
-            return minutes + " phút";
+            return minutes + " min";
         }
-        return (minutes / 60) + " tiếng";
+        return (minutes / 60) + " hr";
     }
 
     private void scheduleSleepTimer() {
@@ -624,7 +878,7 @@ public class MainActivity extends Activity {
                     finish();
                 }
             } else {
-                Toast.makeText(this, "Đã tắt nhạc theo hẹn giờ.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Music stopped by sleep timer.", Toast.LENGTH_SHORT).show();
             }
         };
         sleepTimerHandler.postDelayed(sleepTimerRunnable, minutes * 60L * 1000L);
@@ -681,7 +935,7 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(18), dp(24), dp(18), dp(18));
         panel.setBackgroundColor(BG);
 
-        TextView title = bodyText("Quốc gia + Ngôn ngữ", 20, TEXT);
+        TextView title = bodyText("Country + Language", 20, TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setPadding(0, 0, 0, dp(14));
         panel.addView(title);
@@ -697,7 +951,7 @@ public class MainActivity extends Activity {
         }
 
         if (languages.isEmpty()) {
-            TextView empty = bodyText("Đang tải danh sách ngôn ngữ...", 15, MUTED);
+            TextView empty = bodyText("Loading languages...", 15, MUTED);
             empty.setPadding(dp(8), dp(22), dp(8), dp(22));
             rows.addView(empty);
         }
@@ -837,11 +1091,11 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
-        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Tìm bài hát");
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Search songs");
         try {
             startActivityForResult(intent, VOICE_SEARCH_REQUEST);
         } catch (Exception e) {
-            Toast.makeText(this, "Thiết bị chưa hỗ trợ tìm kiếm giọng nói.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Voice search is not supported on this device.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -849,9 +1103,10 @@ public class MainActivity extends Activity {
         showingDetail = false;
         showingHomeTabs = true;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = false;
         currentHomeTab = "new";
         progressBar.setVisibility(View.VISIBLE);
-        showListLoading("Đang tải bài hát mới...");
+        showListLoading("Loading new songs...");
         repository.loadHome(currentLang, new MusicRepository.Callback() {
             @Override
             public void onSongs(List<Song> songs) {
@@ -873,7 +1128,7 @@ public class MainActivity extends Activity {
     private void loadMonthlyRank(boolean showWhenLoaded) {
         if (showWhenLoaded) {
             progressBar.setVisibility(View.VISIBLE);
-            showListLoading("Đang tải bảng xếp hạng tháng...");
+            showListLoading("Loading monthly chart...");
         }
         repository.loadMonthlyRank(currentLang, new MusicRepository.Callback() {
             @Override
@@ -902,11 +1157,12 @@ public class MainActivity extends Activity {
         showingDetail = false;
         showingHomeTabs = false;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = true;
         detailPlayIcon = null;
         detailWaveView = null;
         detailSongId = "";
         progressBar.setVisibility(View.VISIBLE);
-        showListLoading("Đang tải " + heading.toLowerCase(Locale.getDefault()) + "...");
+        showListLoading("Loading " + heading.toLowerCase(Locale.getDefault()) + "...");
         repository.loadMenuItems(action, currentLang, new MusicRepository.MenuItemCallback() {
             @Override
             public void onItems(List<MenuListItem> items) {
@@ -924,15 +1180,16 @@ public class MainActivity extends Activity {
         showingDetail = false;
         showingHomeTabs = false;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = false;
         progressBar.setVisibility(View.VISIBLE);
         setSearchLoading(true);
-        showListLoading("Đang tìm bài hát...");
+        showListLoading("Searching songs...");
         repository.search(query, currentLang, new MusicRepository.Callback() {
             @Override
             public void onSongs(List<Song> songs) {
                 runOnUiThread(() -> {
                     setSearchLoading(false);
-                    renderSongs("Kết quả: " + query, songs);
+                    renderSearchResults(query, songs);
                 });
             }
 
@@ -942,6 +1199,30 @@ public class MainActivity extends Activity {
                     setSearchLoading(false);
                     showError(message);
                 });
+            }
+        });
+    }
+
+    private void loadSongsByFilter(String heading, String action, String value) {
+        if (value == null || value.trim().isEmpty()) {
+            Toast.makeText(this, "No data available for this list.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        showingDetail = false;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
+        currentListHasHomeBack = true;
+        progressBar.setVisibility(View.VISIBLE);
+        showListLoading("Loading " + heading.toLowerCase(Locale.getDefault()) + "...");
+        repository.loadFilteredSongs(action, value, currentLang, new MusicRepository.Callback() {
+            @Override
+            public void onSongs(List<Song> songs) {
+                runOnUiThread(() -> renderSongsWithBack(heading, songs, "List", () -> loadHome()));
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> showError(message));
             }
         });
     }
@@ -1016,6 +1297,7 @@ public class MainActivity extends Activity {
         showingDetail = false;
         showingHomeTabs = false;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = false;
         detailPlayIcon = null;
         detailWaveView = null;
         detailSongId = "";
@@ -1029,7 +1311,46 @@ public class MainActivity extends Activity {
         songList.addView(heading(heading));
 
         if (songs.isEmpty()) {
-            TextView empty = bodyText("Chưa tìm thấy bài hát có thể phát.", 16, MUTED);
+            TextView empty = bodyText("No playable songs found.", 16, MUTED);
+            empty.setPadding(dp(8), dp(28), dp(8), dp(28));
+            songList.addView(empty);
+            return;
+        }
+
+        List<View> rows = new ArrayList<>();
+        for (int i = 0; i < songs.size(); i++) {
+            rows.add(songRow(songs.get(i), i));
+        }
+        addResponsiveItems(rows);
+    }
+
+    private void renderSearchResults(String query, List<Song> songs) {
+        renderSongsWithBack("Results: " + query, songs, "Main list", () -> loadHome());
+    }
+
+    private void renderSongsWithBack(String heading, List<Song> songs, String backLabel, Runnable backAction) {
+        progressBar.setVisibility(View.GONE);
+        showingDetail = false;
+        showingHomeTabs = false;
+        detailBackToPlaylist = false;
+        currentListHasHomeBack = true;
+        detailPlayIcon = null;
+        detailWaveView = null;
+        detailSongId = "";
+        lastHeading = heading;
+        currentSongs.clear();
+        currentSongs.addAll(songs);
+        songList.removeAllViews();
+        songLoadingViews.clear();
+        scrollToTop();
+
+        LinearLayout back = backButton(backLabel);
+        back.setOnClickListener(view -> backAction.run());
+        songList.addView(back);
+        songList.addView(heading(heading));
+
+        if (songs.isEmpty()) {
+            TextView empty = bodyText("No playable songs found.", 16, MUTED);
             empty.setPadding(dp(8), dp(28), dp(8), dp(28));
             songList.addView(empty);
             return;
@@ -1047,11 +1368,12 @@ public class MainActivity extends Activity {
         showingDetail = false;
         showingHomeTabs = true;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = false;
         detailPlayIcon = null;
         detailWaveView = null;
         detailSongId = "";
         currentHomeTab = activeTab == null || activeTab.isEmpty() ? "new" : activeTab;
-        lastHeading = "rank".equals(currentHomeTab) ? "Bảng xếp hạng tháng" : "Bài hát mới";
+        lastHeading = "rank".equals(currentHomeTab) ? "Monthly chart" : "New songs";
         List<Song> songs = "rank".equals(currentHomeTab) ? monthlyRankSongs : homeSongs;
         currentSongs.clear();
         currentSongs.addAll(songs);
@@ -1062,7 +1384,7 @@ public class MainActivity extends Activity {
         songList.addView(homeTabs());
 
         if (songs.isEmpty()) {
-            TextView empty = bodyText("Chưa tìm thấy bài hát có thể phát.", 16, MUTED);
+            TextView empty = bodyText("No playable songs found.", 16, MUTED);
             empty.setPadding(dp(8), dp(28), dp(8), dp(28));
             songList.addView(empty);
             return;
@@ -1079,10 +1401,10 @@ public class MainActivity extends Activity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setGravity(Gravity.CENTER_VERTICAL);
         tabs.setPadding(0, 0, 0, dp(12));
-        tabs.addView(homeTabButton("Bài hát mới", "new"), new LinearLayout.LayoutParams(0, dp(46), 1));
+        tabs.addView(homeTabButton("New songs", "new"), new LinearLayout.LayoutParams(0, dp(46), 1));
         LinearLayout.LayoutParams rankParams = new LinearLayout.LayoutParams(0, dp(46), 1);
         rankParams.setMargins(dp(8), 0, 0, 0);
-        tabs.addView(homeTabButton("Bảng xếp hạng tháng", "rank"), rankParams);
+        tabs.addView(homeTabButton("Monthly chart", "rank"), rankParams);
         return tabs;
     }
 
@@ -1116,15 +1438,19 @@ public class MainActivity extends Activity {
         showingDetail = false;
         showingHomeTabs = false;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = false;
         lastHeading = heading;
         currentSongs.clear();
         songList.removeAllViews();
         songLoadingViews.clear();
         scrollToTop();
         songList.addView(heading(heading));
+        if (!items.isEmpty() && "tourism".equals(items.get(0).type)) {
+            songList.addView(mapIntroRow());
+        }
 
         if (items.isEmpty()) {
-            TextView empty = bodyText("Chưa có dữ liệu.", 16, MUTED);
+            TextView empty = bodyText("No data yet.", 16, MUTED);
             empty.setPadding(dp(8), dp(28), dp(8), dp(28));
             songList.addView(empty);
             return;
@@ -1132,7 +1458,13 @@ public class MainActivity extends Activity {
 
         List<View> rows = new ArrayList<>();
         for (MenuListItem item : items) {
-            rows.add(menuListItemRow(item, fallbackIconRes));
+            if ("memory".equals(item.type)) {
+                rows.add(memoryTimelineRow(item, fallbackIconRes));
+            } else if ("tourism".equals(item.type)) {
+                rows.add(tourismMapRow(item, fallbackIconRes));
+            } else {
+                rows.add(menuListItemRow(item, fallbackIconRes));
+            }
         }
         addResponsiveItems(rows);
     }
@@ -1172,10 +1504,50 @@ public class MainActivity extends Activity {
             subtitle.setPadding(0, dp(4), 0, 0);
             textBox.addView(subtitle);
         }
+        attachMenuItemClick(row, item);
+        return row;
+    }
+
+    private View memoryTimelineRow(MenuListItem item, int fallbackIconRes) {
+        LinearLayout row = (LinearLayout) menuListItemRow(item, fallbackIconRes);
+        row.setPadding(dp(8), dp(10), dp(10), dp(10));
+        TextView year = bodyText(item.id, 13, Color.WHITE);
+        year.setGravity(Gravity.CENTER);
+        year.setTypeface(Typeface.DEFAULT_BOLD);
+        year.setBackgroundColor(ACCENT);
+        row.addView(year, 0, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        return row;
+    }
+
+    private View tourismMapRow(MenuListItem item, int fallbackIconRes) {
+        LinearLayout row = (LinearLayout) menuListItemRow(item, fallbackIconRes);
+        row.setBackgroundColor(Color.rgb(255, 240, 230));
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        return row;
+    }
+
+    private View mapIntroRow() {
+        TextView map = bodyText("World map · choose a country to hear music by region", 15, Color.WHITE);
+        map.setGravity(Gravity.CENTER);
+        map.setTypeface(Typeface.DEFAULT_BOLD);
+        map.setPadding(dp(14), 0, dp(14), 0);
+        map.setBackgroundColor(Color.rgb(36, 17, 11));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(48));
+        params.setMargins(0, 0, 0, dp(10));
+        map.setLayoutParams(params);
+        return map;
+    }
+
+    private void attachMenuItemClick(View row, MenuListItem item) {
         if ("artist".equals(item.type)) {
             row.setOnClickListener(view -> loadArtistDetail(item.id));
+        } else if ("genre".equals(item.type)) {
+            row.setOnClickListener(view -> loadSongsByFilter("Genre: " + item.title, "genre_songs", item.id));
+        } else if ("memory".equals(item.type)) {
+            row.setOnClickListener(view -> loadSongsByFilter(item.title, "year_songs", item.id));
+        } else if ("tourism".equals(item.type)) {
+            row.setOnClickListener(view -> loadSongsByFilter("Travel: " + item.title, "country_songs", item.id));
         }
-        return row;
     }
 
     private void renderPlaylistScreen() {
@@ -1183,6 +1555,7 @@ public class MainActivity extends Activity {
         showingDetail = false;
         showingHomeTabs = false;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = false;
         detailPlayIcon = null;
         detailWaveView = null;
         detailSongId = "";
@@ -1196,7 +1569,7 @@ public class MainActivity extends Activity {
         songList.addView(heading("Playlist"));
 
         if (currentSongs.isEmpty()) {
-            TextView empty = bodyText("Chưa có bài hát nào trong playlist.", 16, MUTED);
+            TextView empty = bodyText("No songs in this playlist yet.", 16, MUTED);
             empty.setPadding(dp(8), dp(28), dp(8), dp(28));
             songList.addView(empty);
             return;
@@ -1211,11 +1584,11 @@ public class MainActivity extends Activity {
 
     private void loadArtistDetail(String artistId) {
         if (artistId == null || artistId.trim().isEmpty()) {
-            Toast.makeText(this, "Chưa có thông tin nghệ sĩ.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Artist information is not available.", Toast.LENGTH_SHORT).show();
             return;
         }
         progressBar.setVisibility(View.VISIBLE);
-        showListLoading("Đang tải nghệ sĩ...");
+        showListLoading("Loading artist...");
         repository.loadArtist(artistId, new MusicRepository.ArtistCallback() {
             @Override
             public void onArtist(Artist artist, List<Song> songs) {
@@ -1234,18 +1607,19 @@ public class MainActivity extends Activity {
         showingDetail = true;
         showingHomeTabs = false;
         detailBackToPlaylist = false;
+        currentListHasHomeBack = false;
         detailPlayIcon = null;
         detailWaveView = null;
         detailSongId = "";
-        lastHeading = "Nghệ sĩ";
+        lastHeading = "Artists";
         currentSongs.clear();
         currentSongs.addAll(songs);
         songList.removeAllViews();
         songLoadingViews.clear();
         scrollToTop();
 
-        LinearLayout back = backButton("Danh sách");
-        back.setOnClickListener(view -> renderSongs("Nghệ sĩ", new ArrayList<>(currentSongs)));
+        LinearLayout back = backButton("List");
+        back.setOnClickListener(view -> renderSongs("Artists", new ArrayList<>(currentSongs)));
         songList.addView(back);
 
         ImageView avatar = new ImageView(this);
@@ -1256,23 +1630,23 @@ public class MainActivity extends Activity {
         songList.addView(avatar, avatarParams);
         imageLoader.load(artist.avatar, avatar);
 
-        songList.addView(heading(artist.name.isEmpty() ? "Nghệ sĩ" : artist.name));
+        songList.addView(heading(artist.name.isEmpty() ? "Artists" : artist.name));
         TagFlowLayout tags = new TagFlowLayout(this, dp(8), dp(8));
         tags.setPadding(0, dp(4), 0, dp(8));
-        addTag(tags, "Bài hát", artist.songCount > 0 ? String.valueOf(artist.songCount) : String.valueOf(songs.size()));
-        addTag(tags, "Ngôn ngữ", artist.lang);
+        addTag(tags, "Songs", artist.songCount > 0 ? String.valueOf(artist.songCount) : String.valueOf(songs.size()));
+        addTag(tags, "Language", artist.lang);
         songList.addView(tags);
 
         if (!artist.description.isEmpty()) {
-            songList.addView(sectionTitle("Mô tả"));
+            songList.addView(sectionTitle("Description"));
             TextView description = bodyText(artist.description.replace("\\n", "\n"), 15, MUTED);
             description.setLineSpacing(dp(3), 1.0f);
             songList.addView(description);
         }
 
-        songList.addView(sectionTitle("Bài hát của nghệ sĩ"));
+        songList.addView(sectionTitle("Artist songs"));
         if (songs.isEmpty()) {
-            TextView empty = bodyText("Nghệ sĩ này chưa có bài hát.", 16, MUTED);
+            TextView empty = bodyText("This artist has no songs yet.", 16, MUTED);
             empty.setPadding(dp(8), dp(18), dp(8), dp(24));
             songList.addView(empty);
             return;
@@ -1439,6 +1813,8 @@ public class MainActivity extends Activity {
                 renderPlaylistScreen();
             } else if (showingHomeTabs) {
                 renderHomeTabs(currentHomeTab);
+            } else if (currentListHasHomeBack) {
+                renderSongsWithBack(lastHeading, new ArrayList<>(currentSongs), "List", () -> loadHome());
             } else {
                 renderSongs(lastHeading, new ArrayList<>(currentSongs));
             }
@@ -1471,7 +1847,7 @@ public class MainActivity extends Activity {
         actions.setPadding(0, dp(12), 0, dp(16));
         songList.addView(actions, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout play = iconActionButton("Phát bài hát", R.drawable.play);
+        LinearLayout play = iconActionButton("Play song", R.drawable.play);
         detailPlayIcon = (ImageView) play.getChildAt(0);
         detailSongId = song.id;
         updateDetailPlayIcon();
@@ -1495,7 +1871,7 @@ public class MainActivity extends Activity {
         });
 
         if (!song.description.isEmpty()) {
-            songList.addView(sectionTitle("Mô tả"));
+            songList.addView(sectionTitle("Description"));
             songList.addView(bodyText(song.description, 15, MUTED));
         }
         if (!song.lyrics.trim().isEmpty()) {
@@ -1521,38 +1897,59 @@ public class MainActivity extends Activity {
     private TagFlowLayout songTagFlow(Song song) {
         TagFlowLayout tags = new TagFlowLayout(this, dp(8), dp(8));
         tags.setPadding(0, dp(4), 0, dp(8));
-        addTag(tags, "Nghệ sĩ", song.artist.isEmpty() ? "Heart Beat Play" : song.artist, view -> {
+        addTag(tags, "Artists", song.artist.isEmpty() ? "Heart Beat Play" : song.artist, R.drawable.singer, view -> {
             if (song.artistId == null || song.artistId.isEmpty()) {
-                Toast.makeText(this, "Chưa có thông tin nghệ sĩ.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Artist information is not available.", Toast.LENGTH_SHORT).show();
                 return;
             }
             loadArtistDetail(song.artistId);
         });
         addTag(tags, "Album", song.album);
-        addTag(tags, "Thể loại", song.genre);
-        addTag(tags, "Năm", song.year);
-        addTag(tags, "Ngôn ngữ", song.country.isEmpty() ? song.lang : song.country + " · " + song.lang.toUpperCase());
-        addTag(tags, "Lượt nghe", song.viewCount > 0 ? String.valueOf(song.viewCount) : "");
+        addTag(tags, "Genre", song.genre, R.drawable.genre, view -> loadSongsByFilter("Genre: " + song.genre, "genre_songs", firstCsvValue(song.genre)));
+        addTag(tags, "Year", song.year, R.drawable.memory, view -> loadSongsByFilter("Music from " + song.year, "year_songs", song.year));
+        addTag(tags, "Language", song.country.isEmpty() ? song.lang : song.country + " · " + song.lang.toUpperCase());
+        addTag(tags, "Plays", song.viewCount > 0 ? String.valueOf(song.viewCount) : "");
         return tags;
     }
 
     private void addTag(TagFlowLayout tags, String label, String value) {
-        addTag(tags, label, value, null);
+        addTag(tags, label, value, 0, null);
     }
 
     private void addTag(TagFlowLayout tags, String label, String value, View.OnClickListener listener) {
+        addTag(tags, label, value, 0, listener);
+    }
+
+    private void addTag(TagFlowLayout tags, String label, String value, int iconRes, View.OnClickListener listener) {
         if (value == null || value.trim().isEmpty()) {
             return;
         }
-        TextView tag = bodyText(label + ": " + value, 13, Color.rgb(138, 31, 17));
+        int tagColor = Color.rgb(138, 31, 17);
+        TextView tag = bodyText(label + ": " + value, 13, tagColor);
         tag.setTypeface(Typeface.DEFAULT_BOLD);
         tag.setPadding(dp(10), 0, dp(10), 0);
         tag.setGravity(Gravity.CENTER);
         tag.setBackgroundColor(Color.rgb(255, 240, 230));
+        if (iconRes != 0) {
+            Drawable icon = getResources().getDrawable(iconRes).mutate();
+            icon.setTint(tagColor);
+            int iconSize = dp(14);
+            icon.setBounds(0, 0, iconSize, iconSize);
+            tag.setCompoundDrawables(icon, null, null, null);
+            tag.setCompoundDrawablePadding(dp(5));
+        }
         if (listener != null) {
             tag.setOnClickListener(listener);
         }
         tags.addView(tag, new LinearLayout.LayoutParams(-2, dp(34)));
+    }
+
+    private String firstCsvValue(String value) {
+        if (value == null) {
+            return "";
+        }
+        String[] parts = value.split(",");
+        return parts.length == 0 ? value.trim() : parts[0].trim();
     }
 
     private LinearLayout backButton(String label) {
@@ -1695,7 +2092,7 @@ public class MainActivity extends Activity {
     private void updateNowPlaying(Song song) {
         currentPlayingSong = song;
         if (song == null) {
-            nowPlayingTitleView.setText("Chọn một bài hát để phát");
+            nowPlayingTitleView.setText("Choose a song to play");
             nowPlayingArtistView.setText("Heart Beat Play");
         } else {
             nowPlayingTitleView.setText(song.name);
@@ -1706,7 +2103,7 @@ public class MainActivity extends Activity {
 
     private void addToPlaylist(Song song) {
         if (song == null || !song.canPlay()) {
-            Toast.makeText(this, "Bài hát này chưa có file phát.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "This song has no playable audio file.", Toast.LENGTH_SHORT).show();
             return;
         }
         if (currentPlayingSong != null && playlistManager.indexOf(currentPlayingSong.id) < 0) {
@@ -1717,7 +2114,7 @@ public class MainActivity extends Activity {
             playlistManager.setCurrentIndex(playlistManager.indexOf(song.id));
         }
         updatePlaylistButtons();
-        Toast.makeText(this, added ? "Đã thêm vào playlist." : "Bài hát đã có trong playlist.", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, added ? "Added to playlist." : "Song is already in the playlist.", Toast.LENGTH_SHORT).show();
     }
 
     private void playNextFromPlaylist() {
@@ -1782,7 +2179,7 @@ public class MainActivity extends Activity {
 
     private void showCurrentPlayingDetail() {
         if (currentPlayingSong == null) {
-            Toast.makeText(this, "Chưa có bài hát đang phát.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No song is currently playing.", Toast.LENGTH_SHORT).show();
             return;
         }
         int index = findSongIndex(currentPlayingSong.id);

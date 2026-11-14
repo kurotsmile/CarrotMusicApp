@@ -3,12 +3,12 @@ package com.carrot.heartbeatmusic;
 public class GenreMenuAction implements MusicMenuAction {
     @Override
     public String title() {
-        return "Thể loại";
+        return "Genres";
     }
 
     @Override
     public String subtitle() {
-        return "Khám phá màu sắc âm nhạc";
+        return "Explore every shade of music";
     }
 
     @Override
@@ -18,6 +18,6 @@ public class GenreMenuAction implements MusicMenuAction {
 
     @Override
     public void open(MainActivity activity) {
-        activity.loadMenuItems("Thể loại", "genres", R.drawable.genre);
+        activity.loadMenuItems("Genres", "genres", R.drawable.genre);
     }
 }

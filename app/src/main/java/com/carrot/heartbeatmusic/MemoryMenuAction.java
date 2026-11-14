@@ -3,12 +3,12 @@ package com.carrot.heartbeatmusic;
 public class MemoryMenuAction implements MusicMenuAction {
     @Override
     public String title() {
-        return "Ký ức âm nhạc";
+        return "Music Memories";
     }
 
     @Override
     public String subtitle() {
-        return "Nghe nhạc theo dòng thời gian";
+        return "Listen across the timeline";
     }
 
     @Override
@@ -18,6 +18,6 @@ public class MemoryMenuAction implements MusicMenuAction {
 
     @Override
     public void open(MainActivity activity) {
-        activity.loadMenuItems("Ký ức âm nhạc", "memories", R.drawable.memory);
+        activity.loadMenuItems("Music Memories", "memories", R.drawable.memory);
     }
 }

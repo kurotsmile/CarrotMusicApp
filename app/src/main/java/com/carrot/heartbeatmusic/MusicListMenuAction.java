@@ -3,12 +3,12 @@ package com.carrot.heartbeatmusic;
 public class MusicListMenuAction implements MusicMenuAction {
     @Override
     public String title() {
-        return "Danh sách nhạc";
+        return "Music List";
     }
 
     @Override
     public String subtitle() {
-        return "Bài hát theo ngôn ngữ đang chọn";
+        return "Songs for your selected language";
     }
 
     @Override

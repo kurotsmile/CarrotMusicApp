@@ -3,12 +3,12 @@ package com.carrot.heartbeatmusic;
 public class TourismMenuAction implements MusicMenuAction {
     @Override
     public String title() {
-        return "Du lịch";
+        return "Travel";
     }
 
     @Override
     public String subtitle() {
-        return "Âm nhạc theo quốc gia";
+        return "Music by country";
     }
 
     @Override
@@ -18,6 +18,6 @@ public class TourismMenuAction implements MusicMenuAction {
 
     @Override
     public void open(MainActivity activity) {
-        activity.loadMenuItems("Du lịch", "tourism", R.drawable.tourism);
+        activity.loadMenuItems("Travel", "tourism", R.drawable.tourism);
     }
 }

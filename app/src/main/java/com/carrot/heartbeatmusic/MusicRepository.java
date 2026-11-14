@@ -9,6 +9,10 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.CookieHandler;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.HttpURLConnection;
 import java.net.URLEncoder;
 import java.net.URL;
@@ -18,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class MusicRepository {
     private static final long SONG_LIST_TTL_MS = 24L * 60L * 60L * 1000L;
@@ -26,6 +31,9 @@ public class MusicRepository {
 
     public MusicRepository(Context context) {
         cache = context.getSharedPreferences("heartbeat_music_cache", Context.MODE_PRIVATE);
+        if (CookieHandler.getDefault() == null) {
+            CookieHandler.setDefault(new CookieManager(null, CookiePolicy.ACCEPT_ALL));
+        }
     }
 
     public interface Callback {
@@ -48,6 +56,16 @@ public class MusicRepository {
         void onError(String message);
     }
 
+    public interface AccountCallback {
+        void onAccount(String name, String email);
+        void onError(String message);
+    }
+
+    public interface CloudPlaylistCallback {
+        void onPlaylists(List<CloudPlaylist> playlists);
+        void onError(String message);
+    }
+
     public void loadHome(String lang, Callback callback) {
         String url = BuildConfig.MUSIC_API_BASE + "?action=home&limit=36&lang=" + encode(lang);
         load(url, "songs", "songs_home_v2_" + (lang == null || lang.isEmpty() ? "en" : lang), SONG_LIST_TTL_MS, callback);
@@ -62,6 +80,12 @@ public class MusicRepository {
 
     public void search(String query, String lang, Callback callback) {
         load(BuildConfig.MUSIC_API_BASE + "?action=search&limit=48&q=" + encode(query) + "&lang=" + encode(lang), "songs", "", 0, callback);
+    }
+
+    public void loadFilteredSongs(String action, String value, String lang, Callback callback) {
+        String normalizedLang = lang == null || lang.isEmpty() ? "en" : lang;
+        String url = BuildConfig.MUSIC_API_BASE + "?action=" + encode(action) + "&limit=60&id=" + encode(value) + "&lang=" + encode(normalizedLang);
+        load(url, "songs", "songs_filter_v1_" + action + "_" + normalizedLang + "_" + value, SONG_LIST_TTL_MS, callback);
     }
 
     public void loadMenuItems(String action, String lang, MenuItemCallback callback) {
@@ -142,6 +166,117 @@ public class MusicRepository {
         }).start();
     }
 
+    public void login(String email, String password, AccountCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                byte[] payload = ("email=" + encode(email) + "&password=" + encode(password)).getBytes(StandardCharsets.UTF_8);
+                connection = (HttpURLConnection) new URL(siteUrl("login-email.php")).openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(16000);
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(payload);
+                }
+                int code = connection.getResponseCode();
+                saveSessionCookie(connection);
+                InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+                JSONObject root = new JSONObject(readAll(stream));
+                if (!root.optBoolean("ok", false)) {
+                    callback.onError(root.optString("message", "Sign in failed."));
+                    return;
+                }
+                JSONObject user = root.optJSONObject("user");
+                callback.onAccount(user == null ? "" : user.optString("name"), user == null ? email : user.optString("email", email));
+            } catch (Exception e) {
+                callback.onError(e.getMessage() == null ? "Sign in failed." : e.getMessage());
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+        }).start();
+    }
+
+    public void register(String name, String email, String password, String confirmPassword, AccountCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                byte[] payload = ("action=register&name=" + encode(name)
+                        + "&email=" + encode(email)
+                        + "&password=" + encode(password)
+                        + "&password_confirm=" + encode(confirmPassword)).getBytes(StandardCharsets.UTF_8);
+                connection = (HttpURLConnection) new URL(BuildConfig.MUSIC_API_BASE).openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(16000);
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(payload);
+                }
+                int code = connection.getResponseCode();
+                saveSessionCookie(connection);
+                InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+                JSONObject root = new JSONObject(readAll(stream));
+                if (!root.optBoolean("ok", false)) {
+                    callback.onError(root.optString("error", "Registration failed."));
+                    return;
+                }
+                JSONObject user = root.optJSONObject("user");
+                callback.onAccount(user == null ? name : user.optString("name", name), user == null ? email : user.optString("email", email));
+            } catch (Exception e) {
+                callback.onError(e.getMessage() == null ? "Registration failed." : e.getMessage());
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+        }).start();
+    }
+
+    public void loadCloudPlaylists(CloudPlaylistCallback callback) {
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(siteUrl("playlist.php?action=list")).openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(16000);
+                connection.setRequestProperty("Accept", "application/json");
+                applySessionCookie(connection);
+                int code = connection.getResponseCode();
+                InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+                JSONObject root = new JSONObject(readAll(stream));
+                if (!root.optBoolean("ok", false)) {
+                    callback.onError(root.optString("message", "Could not load cloud playlists."));
+                    return;
+                }
+                JSONArray items = root.optJSONArray("playlists");
+                List<CloudPlaylist> playlists = new ArrayList<>();
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        playlists.add(new CloudPlaylist(items.getJSONObject(i)));
+                    }
+                }
+                callback.onPlaylists(playlists);
+            } catch (Exception e) {
+                callback.onError(e.getMessage() == null ? "Could not load cloud playlists." : e.getMessage());
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+        }).start();
+    }
+
+    public void clearSession() {
+        cache.edit().remove("session_cookie").apply();
+    }
+
     private String encode(String value) {
         String encoded;
         try {
@@ -150,6 +285,37 @@ public class MusicRepository {
             encoded = value == null ? "" : value;
         }
         return encoded;
+    }
+
+    private String siteUrl(String path) {
+        String base = BuildConfig.MUSIC_API_BASE;
+        int slash = base.lastIndexOf('/');
+        String root = slash >= 0 ? base.substring(0, slash + 1) : base;
+        return root + path;
+    }
+
+    private void saveSessionCookie(HttpURLConnection connection) {
+        Map<String, List<String>> headers = connection.getHeaderFields();
+        if (headers == null) {
+            return;
+        }
+        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+            if (entry.getKey() != null && "Set-Cookie".equalsIgnoreCase(entry.getKey()) && entry.getValue() != null) {
+                for (String cookie : entry.getValue()) {
+                    if (cookie != null && cookie.toLowerCase(Locale.US).contains("phpsessid")) {
+                        cache.edit().putString("session_cookie", cookie.split(";", 2)[0]).apply();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private void applySessionCookie(HttpURLConnection connection) {
+        String cookie = cache.getString("session_cookie", "");
+        if (cookie != null && !cookie.isEmpty()) {
+            connection.setRequestProperty("Cookie", cookie);
+        }
     }
 
     private void load(String url, String arrayKey, String cacheKey, long ttlMs, Callback callback) {

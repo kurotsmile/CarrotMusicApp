@@ -3,12 +3,12 @@ package com.carrot.heartbeatmusic;
 public class SleepTimerMenuAction implements MusicMenuAction {
     @Override
     public String title() {
-        return "Hẹn tắt nhạc";
+        return "Sleep Timer";
     }
 
     @Override
     public String subtitle() {
-        return "Tắt nhạc hoặc tắt ứng dụng theo thời gian";
+        return "Stop music or close the app later";
     }
 
     @Override
