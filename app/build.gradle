@@ -17,15 +17,16 @@ def hasReleaseSigning = rootProject.file(keystoreProps["storeFile"] ?: "music_fo
 
 android {
     namespace "com.carrot.heartbeatmusic"
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.carrotstore.heartbeatmusic"
         minSdk 24
-        targetSdk 35
-        versionCode 3
+        targetSdk 36
+        versionCode 5
         versionName "1.0.0"
         buildConfigField "String", "MUSIC_API_BASE", "\"https://heartbeatplay.com/api.php\""
+        buildConfigField "String", "REMOVE_ADS_PRODUCT_ID", "\"com.carrotstore.heartbeatmusic.removeads\""
     }
 
     buildFeatures {
@@ -54,6 +55,7 @@ android {
             dimension "device"
             applicationId "com.carrotstore.heartbeatmusic"
             resValue "string", "app_name", "Heartbeat Music"
+            resValue "string", "admob_app_id", "ca-app-pub-5388516931803092~9346612767"
         }
         tv {
             dimension "device"
@@ -67,10 +69,12 @@ android {
         debug {
             applicationIdSuffix ".debug"
             versionNameSuffix "-debug"
+            buildConfigField "String", "INTERSTITIAL_AD_UNIT_ID", "\"ca-app-pub-5388516931803092/2098678137\""
         }
         release {
-            minifyEnabled false
+            minifyEnabled true
             signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            buildConfigField "String", "INTERSTITIAL_AD_UNIT_ID", "\"ca-app-pub-5388516931803092/2098678137\""
         }
     }
 }
@@ -81,4 +85,7 @@ dependencies {
     implementation "androidx.media3:media3-session:1.5.1"
     implementation "androidx.media3:media3-ui:1.5.1"
     implementation "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
+    mobileImplementation "com.android.billingclient:billing:9.1.0"
+    mobileImplementation "com.google.android.libraries.ads.mobile.sdk:ads-mobile-sdk:1.6.0"
+    mobileImplementation "com.google.android.ump:user-messaging-platform:4.0.0"
 }

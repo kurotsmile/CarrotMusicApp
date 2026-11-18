@@ -1,0 +1,8 @@
+Package:com.carrotstore.heartbeatmusic
+AdMob App ID:ca-app-pub-5388516931803092~9346612767
+Banner ID: chưa dùng
+Interstitial ID:ca-app-pub-5388516931803092/2098678137
+Rewarded ID: chưa dùng
+Vị trí hiển thị: ...
+Privacy Policy: ...
+Có Premium không quảng cáo: Có/Không

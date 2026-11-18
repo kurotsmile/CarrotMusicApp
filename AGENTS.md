@@ -101,8 +101,8 @@ Account/profile uses CarrotMusic session endpoints beside `api.php`:
 Because this project lives on `/Volumes`, Gradle may need a cache directory outside the mounted volume:
 
 ```sh
-GRADLE_USER_HOME=/tmp/gradle-user-home /tmp/gradle-8.10.2/bin/gradle --no-daemon --project-cache-dir /tmp/carrotmusicapp-gradle-cache :app:assembleMobileDebug
-GRADLE_USER_HOME=/tmp/gradle-user-home /tmp/gradle-8.10.2/bin/gradle --no-daemon --project-cache-dir /tmp/carrotmusicapp-gradle-cache :app:assembleTvDebug
+GRADLE_USER_HOME=/tmp/gradle-user-home /tmp/gradle-8.11.1/bin/gradle --no-daemon --project-cache-dir /tmp/carrotmusicapp-gradle-cache :app:assembleMobileDebug
+GRADLE_USER_HOME=/tmp/gradle-user-home /tmp/gradle-8.11.1/bin/gradle --no-daemon --project-cache-dir /tmp/carrotmusicapp-gradle-cache :app:assembleTvDebug
 ```
 
 If a system `gradle` is available, it can be used with the same `--project-cache-dir`.

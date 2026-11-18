@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     private static final int ACCENT = Color.rgb(255, 106, 0);
 
     private MusicRepository repository;
+    private MonetizationManager monetizationManager;
     private final ImageLoader imageLoader = new ImageLoader();
     private final PlaylistManager playlistManager = new PlaylistManager();
     private final List<Song> currentSongs = new ArrayList<>();
@@ -118,6 +119,7 @@ public class MainActivity extends Activity {
     private boolean sleepTimerActive = false;
     private boolean sleepTimerExitApp = false;
     private int sleepTimerIndex = 2;
+    private long sleepTimerEndsAtMillis = 0L;
     private Runnable sleepTimerRunnable = null;
 
     private final Player.Listener playerListener = new Player.Listener() {
@@ -161,6 +163,8 @@ public class MainActivity extends Activity {
         }
         repository = new MusicRepository(this);
         appPrefs = getSharedPreferences("heartbeat_music_app", MODE_PRIVATE);
+        monetizationManager = new MonetizationManager(this, appPrefs);
+        monetizationManager.start();
         currentLang = appPrefs.getString("selected_lang", "en");
         accountLoggedIn = appPrefs.getBoolean("account_logged_in", false);
         accountName = appPrefs.getString("account_name", "");
@@ -181,6 +185,9 @@ public class MainActivity extends Activity {
         menuActions.add(new MemoryMenuAction());
         menuActions.add(new TourismMenuAction());
         menuActions.add(new SleepTimerMenuAction());
+        if (monetizationManager.isAvailable()) {
+            menuActions.add(new RemoveAdsMenuAction());
+        }
     }
 
     private void buildUi() {
@@ -460,6 +467,24 @@ public class MainActivity extends Activity {
         }
 
         dialog.setContentView(panel);
+        Runnable[] countdownUpdater = new Runnable[1];
+        countdownUpdater[0] = () -> {
+            if (!dialog.isShowing()) {
+                return;
+            }
+            for (int i = 0; i < panel.getChildCount(); i++) {
+                View child = panel.getChildAt(i);
+                Object tag = child.getTag();
+                if (tag instanceof TextView) {
+                    ((TextView) tag).setText(sleepTimerActive
+                            ? sleepTimerCountdownLabel()
+                            : "Stop music or close the app later");
+                    break;
+                }
+            }
+            sleepTimerHandler.postDelayed(countdownUpdater[0], 1000L);
+        };
+        dialog.setOnDismissListener(dismissed -> sleepTimerHandler.removeCallbacks(countdownUpdater[0]));
         Window window = dialog.getWindow();
         dialog.setOnShowListener(shownDialog -> {
             Window shownWindow = dialog.getWindow();
@@ -473,6 +498,7 @@ public class MainActivity extends Activity {
             window.setGravity(Gravity.END);
         }
         dialog.show();
+        sleepTimerHandler.post(countdownUpdater[0]);
     }
 
     private View menuRow(MusicMenuAction action, Dialog dialog) {
@@ -505,9 +531,14 @@ public class MainActivity extends Activity {
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
         textBox.addView(titleView);
 
-        TextView subtitleView = bodyText(action.subtitle(), 12, MUTED);
+        TextView subtitleView = bodyText(action instanceof SleepTimerMenuAction && sleepTimerActive
+                ? sleepTimerCountdownLabel()
+                : action.subtitle(), 12, MUTED);
         subtitleView.setPadding(0, dp(4), 0, 0);
         textBox.addView(subtitleView);
+        if (action instanceof SleepTimerMenuAction) {
+            row.setTag(subtitleView);
+        }
         row.setOnClickListener(view -> {
             dialog.dismiss();
             action.open(this);
@@ -864,12 +895,22 @@ public class MainActivity extends Activity {
         return (minutes / 60) + " hr";
     }
 
+    private String sleepTimerCountdownLabel() {
+        long totalSeconds = Math.max(0L, sleepTimerEndsAtMillis - System.currentTimeMillis() + 999L) / 1000L;
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+        long seconds = totalSeconds % 60L;
+        return String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds);
+    }
+
     private void scheduleSleepTimer() {
         cancelSleepTimerRunnableOnly();
         sleepTimerActive = true;
         int minutes = SLEEP_TIMER_MINUTES[Math.max(0, Math.min(sleepTimerIndex, SLEEP_TIMER_MINUTES.length - 1))];
+        sleepTimerEndsAtMillis = System.currentTimeMillis() + minutes * 60L * 1000L;
         sleepTimerRunnable = () -> {
             sleepTimerActive = false;
+            sleepTimerEndsAtMillis = 0L;
             stopAndHidePlayer();
             if (sleepTimerExitApp) {
                 if (Build.VERSION.SDK_INT >= 21) {
@@ -886,6 +927,7 @@ public class MainActivity extends Activity {
 
     private void cancelSleepTimer() {
         sleepTimerActive = false;
+        sleepTimerEndsAtMillis = 0L;
         cancelSleepTimerRunnableOnly();
     }
 
@@ -1151,6 +1193,10 @@ public class MainActivity extends Activity {
 
     void loadHomeFromMenu() {
         loadHome();
+    }
+
+    void purchaseRemoveAds() {
+        monetizationManager.purchaseRemoveAds();
     }
 
     void loadMenuItems(String heading, String action, int fallbackIconRes) {
@@ -2041,13 +2087,15 @@ public class MainActivity extends Activity {
             return;
         }
         Song song = currentSongs.get(index);
-        int playlistIndex = playlistManager.indexOf(song.id);
-        if (playlistManager.hasMultiple() && playlistIndex >= 0) {
-            playlistManager.setCurrentIndex(playlistIndex);
-        } else {
-            playlistManager.setSingle(song);
-        }
-        playPlaylistCurrent();
+        monetizationManager.runAfterInterstitial(() -> {
+            int playlistIndex = playlistManager.indexOf(song.id);
+            if (playlistManager.hasMultiple() && playlistIndex >= 0) {
+                playlistManager.setCurrentIndex(playlistIndex);
+            } else {
+                playlistManager.setSingle(song);
+            }
+            playPlaylistCurrent();
+        });
     }
 
     private void playPlaylistCurrent() {
@@ -2289,6 +2337,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         cancelSleepTimerRunnableOnly();
+        monetizationManager.destroy();
         if (controller != null) {
             controller.removeListener(playerListener);
             controller.release();

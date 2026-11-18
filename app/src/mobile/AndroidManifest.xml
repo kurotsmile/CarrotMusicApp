@@ -2,6 +2,10 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application>
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="@string/admob_app_id" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
