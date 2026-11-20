@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.content.res.ColorStateList;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -59,6 +60,10 @@ import java.util.Map;
 public class MainActivity extends Activity {
     private static final int VOICE_SEARCH_REQUEST = 42;
     private static final int[] SLEEP_TIMER_MINUTES = new int[]{5, 15, 30, 60, 120, 180};
+    private static final int LOOP_MODE_OFF = 0;
+    private static final int LOOP_MODE_ALL = 1;
+    private static final int LOOP_MODE_ONE = 2;
+    private static final int LOOP_MODE_SHUFFLE = 3;
     private static final int DARK = Color.rgb(16, 11, 9);
     private static final int BG = Color.rgb(255, 247, 242);
     private static final int CARD = Color.WHITE;
@@ -77,10 +82,12 @@ public class MainActivity extends Activity {
     private final List<MusicLanguage> languages = new ArrayList<>();
     private final List<MusicMenuAction> menuActions = new ArrayList<>();
     private final Handler sleepTimerHandler = new Handler(Looper.getMainLooper());
+    private final Handler playbackPositionHandler = new Handler(Looper.getMainLooper());
     private LinearLayout songList;
     private ScrollView mainScrollView;
     private ProgressBar progressBar;
     private ProgressBar playbackProgressBar;
+    private ProgressBar playbackPositionBar;
     private TextView nowPlayingTitleView;
     private TextView nowPlayingArtistView;
     private LinearLayout languageButton;
@@ -96,6 +103,7 @@ public class MainActivity extends Activity {
     private ImageButton prevButton;
     private ImageButton playPauseButton;
     private ImageButton nextButton;
+    private ImageButton loopModeButton;
     private ImageButton infoButton;
     private ImageButton stopButton;
     private ImageView detailPlayIcon;
@@ -121,6 +129,20 @@ public class MainActivity extends Activity {
     private int sleepTimerIndex = 2;
     private long sleepTimerEndsAtMillis = 0L;
     private Runnable sleepTimerRunnable = null;
+    private int loopMode = LOOP_MODE_ALL;
+    private final Runnable playbackPositionRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (playbackPositionBar != null && controller != null) {
+                long duration = controller.getDuration();
+                long position = Math.max(0L, controller.getCurrentPosition());
+                playbackPositionBar.setProgress(duration > 0L
+                        ? (int) Math.min(1000L, position * 1000L / duration)
+                        : 0);
+            }
+            playbackPositionHandler.postDelayed(this, 500L);
+        }
+    };
 
     private final Player.Listener playerListener = new Player.Listener() {
         @Override
@@ -169,8 +191,11 @@ public class MainActivity extends Activity {
         accountLoggedIn = appPrefs.getBoolean("account_logged_in", false);
         accountName = appPrefs.getString("account_name", "");
         accountEmail = appPrefs.getString("account_email", "");
+        loopMode = Math.max(LOOP_MODE_OFF, Math.min(LOOP_MODE_SHUFFLE,
+                appPrefs.getInt("loop_mode", LOOP_MODE_ALL)));
         setupMenuActions();
         buildUi();
+        playbackPositionHandler.post(playbackPositionRunnable);
         connectController();
         loadLanguages();
         loadHome();
@@ -357,7 +382,7 @@ public class MainActivity extends Activity {
 
         LinearLayout playerContent = new LinearLayout(this);
         playerContent.setGravity(Gravity.CENTER_VERTICAL);
-        playerContent.setPadding(dp(14), dp(10), dp(14), dp(10));
+        playerContent.setPadding(dp(10), dp(10), dp(10), dp(10));
         playerBar.addView(playerContent, new LinearLayout.LayoutParams(-1, 0, 1));
 
         prevButton = new ImageButton(this);
@@ -365,10 +390,10 @@ public class MainActivity extends Activity {
         prevButton.setColorFilter(Color.WHITE);
         prevButton.setBackgroundColor(Color.rgb(36, 17, 11));
         prevButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        prevButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        prevButton.setPadding(dp(9), dp(9), dp(9), dp(9));
         prevButton.setVisibility(View.GONE);
-        LinearLayout.LayoutParams prevParams = new LinearLayout.LayoutParams(dp(44), dp(44));
-        prevParams.setMargins(0, 0, dp(8), 0);
+        LinearLayout.LayoutParams prevParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        prevParams.setMargins(0, 0, dp(4), 0);
         playerContent.addView(prevButton, prevParams);
         prevButton.setOnClickListener(view -> playPreviousFromPlaylist());
 
@@ -378,7 +403,7 @@ public class MainActivity extends Activity {
         playPauseButton.setBackgroundColor(ACCENT);
         playPauseButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         playPauseButton.setPadding(dp(10), dp(10), dp(10), dp(10));
-        playerContent.addView(playPauseButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        playerContent.addView(playPauseButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         playPauseButton.setOnClickListener(view -> {
             if (controller == null) {
                 return;
@@ -397,10 +422,10 @@ public class MainActivity extends Activity {
         nextButton.setColorFilter(Color.WHITE);
         nextButton.setBackgroundColor(Color.rgb(36, 17, 11));
         nextButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        nextButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        nextButton.setPadding(dp(9), dp(9), dp(9), dp(9));
         nextButton.setVisibility(View.GONE);
-        LinearLayout.LayoutParams nextParams = new LinearLayout.LayoutParams(dp(44), dp(44));
-        nextParams.setMargins(dp(8), 0, 0, 0);
+        LinearLayout.LayoutParams nextParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        nextParams.setMargins(dp(4), 0, 0, 0);
         playerContent.addView(nextButton, nextParams);
         nextButton.setOnClickListener(view -> playNextFromPlaylist());
 
@@ -425,14 +450,25 @@ public class MainActivity extends Activity {
         nowPlayingArtistView.setSingleLine(true);
         nowPlayingBox.addView(nowPlayingArtistView);
 
+        loopModeButton = new ImageButton(this);
+        loopModeButton.setImageResource(loopModeIconRes());
+        loopModeButton.setColorFilter(Color.WHITE);
+        loopModeButton.setBackgroundColor(Color.rgb(36, 17, 11));
+        loopModeButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        loopModeButton.setPadding(dp(9), dp(9), dp(9), dp(9));
+        LinearLayout.LayoutParams loopParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        loopParams.setMargins(dp(6), 0, 0, 0);
+        playerContent.addView(loopModeButton, loopParams);
+        loopModeButton.setOnClickListener(view -> showLoopModeDialog());
+
         infoButton = new ImageButton(this);
         infoButton.setImageResource(R.drawable.info);
         infoButton.setColorFilter(Color.WHITE);
         infoButton.setBackgroundColor(Color.rgb(36, 17, 11));
         infoButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        infoButton.setPadding(dp(11), dp(11), dp(11), dp(11));
-        LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        infoParams.setMargins(dp(10), 0, 0, 0);
+        infoButton.setPadding(dp(9), dp(9), dp(9), dp(9));
+        LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        infoParams.setMargins(dp(6), 0, 0, 0);
         playerContent.addView(infoButton, infoParams);
         infoButton.setOnClickListener(view -> showCurrentPlayingDetail());
 
@@ -441,11 +477,17 @@ public class MainActivity extends Activity {
         stopButton.setColorFilter(Color.WHITE);
         stopButton.setBackgroundColor(Color.rgb(36, 17, 11));
         stopButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        stopButton.setPadding(dp(10), dp(10), dp(10), dp(10));
-        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        stopParams.setMargins(dp(10), 0, 0, 0);
+        stopButton.setPadding(dp(9), dp(9), dp(9), dp(9));
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        stopParams.setMargins(dp(6), 0, 0, 0);
         playerContent.addView(stopButton, stopParams);
         stopButton.setOnClickListener(view -> stopAndHidePlayer());
+
+        playbackPositionBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        playbackPositionBar.setMax(1000);
+        playbackPositionBar.setProgressTintList(ColorStateList.valueOf(ACCENT));
+        playbackPositionBar.setProgressBackgroundTintList(ColorStateList.valueOf(Color.rgb(67, 46, 39)));
+        playerBar.addView(playbackPositionBar, new LinearLayout.LayoutParams(-1, dp(3)));
 
         setContentView(root);
     }
@@ -945,6 +987,7 @@ public class MainActivity extends Activity {
             try {
                 controller = controllerFuture.get();
                 controller.addListener(playerListener);
+                applyLoopModeToController();
                 updatePlayerState();
             } catch (Exception e) {
                 Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
@@ -1943,13 +1986,19 @@ public class MainActivity extends Activity {
     private TagFlowLayout songTagFlow(Song song) {
         TagFlowLayout tags = new TagFlowLayout(this, dp(8), dp(8));
         tags.setPadding(0, dp(4), 0, dp(8));
-        addTag(tags, "Artists", song.artist.isEmpty() ? "Heart Beat Play" : song.artist, R.drawable.singer, view -> {
-            if (song.artistId == null || song.artistId.isEmpty()) {
-                Toast.makeText(this, "Artist information is not available.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            loadArtistDetail(song.artistId);
-        });
+        String[] artistNames = (song.artist.isEmpty() ? "Heart Beat Play" : song.artist).split("\\s*,\\s*");
+        String[] artistIds = (song.artistIds.isEmpty() ? song.artistId : song.artistIds).split("\\s*,\\s*");
+        for (int i = 0; i < artistNames.length; i++) {
+            String artistName = artistNames[i].trim();
+            String artistId = i < artistIds.length ? artistIds[i].trim() : "";
+            addTag(tags, "Artist", artistName, R.drawable.singer, view -> {
+                if (artistId.isEmpty()) {
+                    Toast.makeText(this, "Artist information is not available.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                loadArtistDetail(artistId);
+            });
+        }
         addTag(tags, "Album", song.album);
         addTag(tags, "Genre", song.genre, R.drawable.genre, view -> loadSongsByFilter("Genre: " + song.genre, "genre_songs", firstCsvValue(song.genre)));
         addTag(tags, "Year", song.year, R.drawable.memory, view -> loadSongsByFilter("Music from " + song.year, "year_songs", song.year));
@@ -2082,6 +2131,117 @@ public class MainActivity extends Activity {
         return view;
     }
 
+    private void showLoopModeDialog() {
+        Dialog dialog = new Dialog(this);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(18), dp(18), dp(18));
+        GradientDrawable panelBackground = new GradientDrawable();
+        panelBackground.setColor(Color.WHITE);
+        panelBackground.setCornerRadii(new float[]{dp(22), dp(22), dp(22), dp(22), 0, 0, 0, 0});
+        panel.setBackground(panelBackground);
+
+        TextView title = bodyText("Loop Mode", 21, TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setPadding(dp(4), 0, 0, dp(12));
+        panel.addView(title);
+
+        int[] modes = new int[]{LOOP_MODE_OFF, LOOP_MODE_ALL, LOOP_MODE_ONE, LOOP_MODE_SHUFFLE};
+        int[] icons = new int[]{R.drawable.loop_repeat_off, R.drawable.loop_all, R.drawable.loop_one, R.drawable.loop_shuffle};
+        String[] titles = new String[]{"Repeat Off", "Repeat All", "Repeat One", "Shuffle"};
+        String[] descriptions = new String[]{
+                "Stop when the playlist ends",
+                "Repeat the entire playlist",
+                "Repeat the current song continuously",
+                "Play songs in random order"
+        };
+        for (int i = 0; i < modes.length; i++) {
+            int mode = modes[i];
+            boolean selected = mode == loopMode;
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            GradientDrawable rowBackground = new GradientDrawable();
+            rowBackground.setColor(selected ? Color.rgb(255, 240, 230) : Color.TRANSPARENT);
+            rowBackground.setCornerRadius(dp(12));
+            row.setBackground(rowBackground);
+
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(icons[i]);
+            icon.setColorFilter(selected ? ACCENT : TEXT);
+            icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            row.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+            LinearLayout textBox = new LinearLayout(this);
+            textBox.setOrientation(LinearLayout.VERTICAL);
+            textBox.setPadding(dp(12), 0, 0, 0);
+            row.addView(textBox, new LinearLayout.LayoutParams(0, -2, 1));
+
+            TextView name = bodyText(titles[i], 16, selected ? ACCENT : TEXT);
+            name.setTypeface(Typeface.DEFAULT_BOLD);
+            textBox.addView(name);
+            TextView description = bodyText(descriptions[i], 13, MUTED);
+            description.setPadding(0, dp(3), 0, 0);
+            textBox.addView(description);
+
+            row.setOnClickListener(view -> {
+                setLoopMode(mode);
+                dialog.dismiss();
+            });
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.setMargins(0, 0, 0, dp(4));
+            panel.addView(row, rowParams);
+        }
+
+        dialog.setContentView(panel);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setGravity(Gravity.BOTTOM);
+            window.setWindowAnimations(R.style.LoopModeDialogAnimation);
+        }
+        dialog.show();
+        if (window != null) {
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void setLoopMode(int mode) {
+        loopMode = mode;
+        appPrefs.edit().putInt("loop_mode", loopMode).apply();
+        if (loopModeButton != null) {
+            loopModeButton.setImageResource(loopModeIconRes());
+        }
+        applyLoopModeToController();
+    }
+
+    private int loopModeIconRes() {
+        if (loopMode == LOOP_MODE_OFF) {
+            return R.drawable.loop_repeat_off;
+        }
+        if (loopMode == LOOP_MODE_ONE) {
+            return R.drawable.loop_one;
+        }
+        if (loopMode == LOOP_MODE_SHUFFLE) {
+            return R.drawable.loop_shuffle;
+        }
+        return R.drawable.loop_all;
+    }
+
+    private void applyLoopModeToController() {
+        if (controller == null) {
+            return;
+        }
+        controller.setShuffleModeEnabled(loopMode == LOOP_MODE_SHUFFLE);
+        if (loopMode == LOOP_MODE_OFF) {
+            controller.setRepeatMode(Player.REPEAT_MODE_OFF);
+        } else if (loopMode == LOOP_MODE_ONE) {
+            controller.setRepeatMode(Player.REPEAT_MODE_ONE);
+        } else {
+            controller.setRepeatMode(Player.REPEAT_MODE_ALL);
+        }
+    }
+
     private void playAt(int index) {
         if (controller == null || index < 0 || index >= currentSongs.size()) {
             return;
@@ -2089,7 +2249,7 @@ public class MainActivity extends Activity {
         Song song = currentSongs.get(index);
         monetizationManager.runAfterInterstitial(() -> {
             int playlistIndex = playlistManager.indexOf(song.id);
-            if (playlistManager.hasMultiple() && playlistIndex >= 0) {
+            if (playlistManager.isPlaylistActive() && playlistIndex >= 0) {
                 playlistManager.setCurrentIndex(playlistIndex);
             } else {
                 playlistManager.setSingle(song);
@@ -2112,6 +2272,7 @@ public class MainActivity extends Activity {
         List<MediaItem> mediaItems = buildPlaylistMediaItems();
         int startIndex = playlistManager.isPlaylistActive() ? Math.max(0, playlistManager.currentIndex()) : 0;
         controller.setMediaItems(mediaItems, startIndex, 0);
+        applyLoopModeToController();
         controller.prepare();
         controller.play();
         updateNowPlaying(song);
@@ -2154,35 +2315,58 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "This song has no playable audio file.", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (currentPlayingSong != null && playlistManager.indexOf(currentPlayingSong.id) < 0) {
+        if (currentPlayingSong != null && !currentPlayingSong.id.equals(song.id)
+                && playlistManager.indexOf(currentPlayingSong.id) < 0) {
             playlistManager.add(currentPlayingSong);
         }
         boolean added = playlistManager.add(song);
-        if (currentPlayingSong != null && currentPlayingSong.id.equals(song.id)) {
-            playlistManager.setCurrentIndex(playlistManager.indexOf(song.id));
+        int currentIndex = playlistManager.indexOf(currentPlayingSong == null ? song.id : currentPlayingSong.id);
+        if (currentIndex >= 0) {
+            boolean queueNeedsSync = added || !playlistManager.isPlaylistActive()
+                    || (controller != null && controller.getMediaItemCount() != playlistManager.playlistItems().size());
+            playlistManager.setCurrentIndex(currentIndex);
+            if (queueNeedsSync && controller != null && controller.getCurrentMediaItem() != null) {
+                long currentPosition = Math.max(0L, controller.getCurrentPosition());
+                boolean playWhenReady = controller.getPlayWhenReady();
+                controller.setMediaItems(buildPlaylistMediaItems(), currentIndex, currentPosition);
+                applyLoopModeToController();
+                controller.prepare();
+                if (playWhenReady) {
+                    controller.play();
+                } else {
+                    controller.pause();
+                }
+            }
         }
         updatePlaylistButtons();
         Toast.makeText(this, added ? "Added to playlist." : "Song is already in the playlist.", Toast.LENGTH_SHORT).show();
     }
 
     private void playNextFromPlaylist() {
-        if (!playlistManager.hasMultiple()) {
+        if (!playlistManager.isPlaylistActive() || playlistManager.playlistItems().isEmpty() || controller == null) {
             return;
         }
-        playlistManager.next();
-        playPlaylistCurrent();
+        if (playlistManager.hasMultiple()) {
+            controller.seekToNextMediaItem();
+        } else {
+            controller.seekTo(0L);
+        }
     }
 
     private void playPreviousFromPlaylist() {
-        if (!playlistManager.hasMultiple()) {
+        if (!playlistManager.isPlaylistActive() || playlistManager.playlistItems().isEmpty() || controller == null) {
             return;
         }
-        playlistManager.previous();
-        playPlaylistCurrent();
+        if (playlistManager.hasMultiple()) {
+            controller.seekToPreviousMediaItem();
+        } else {
+            controller.seekTo(0L);
+        }
     }
 
     private void updatePlaylistButtons() {
-        int visibility = playlistManager.hasMultiple() && playlistManager.isPlaylistActive() ? View.VISIBLE : View.GONE;
+        int visibility = playlistManager.isPlaylistActive() && !playlistManager.playlistItems().isEmpty()
+                ? View.VISIBLE : View.GONE;
         if (prevButton != null) {
             prevButton.setVisibility(visibility);
         }
@@ -2217,6 +2401,7 @@ public class MainActivity extends Activity {
             controller.clearMediaItems();
         }
         playbackProgressBar.setVisibility(View.GONE);
+        playbackPositionBar.setProgress(0);
         playerBar.setVisibility(View.GONE);
         playlistManager.setSingle(null);
         updateNowPlaying(null);
@@ -2337,6 +2522,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         cancelSleepTimerRunnableOnly();
+        playbackPositionHandler.removeCallbacks(playbackPositionRunnable);
         monetizationManager.destroy();
         if (controller != null) {
             controller.removeListener(playerListener);

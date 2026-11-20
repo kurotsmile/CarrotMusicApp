@@ -115,7 +115,7 @@ When the user's request contains `[build]`, create the signed **mobile** Google 
 - Ensure R8/minification is enabled for the release build so every `[build]` generates a fresh ReTrace mapping file at `app/build/outputs/mapping/mobileRelease/mapping.txt`.
 - Verify `mapping.txt` exists after the build and return a clickable path to it together with the `.aab`; never reuse a mapping file from a previous build/version.
 - Keep `minSdk` at **24 or higher** because Google Play's automatic protection requires it.
-- Honor any `versionCode` requested by the user by updating `app/build.gradle` before building. If no version code is requested, preserve the existing one.
+- Before every `[build]`, update `versionCode` in `app/build.gradle`. If the user requests a specific version code, use that exact value; otherwise automatically increment the current `versionCode` by 1. Do not change `versionName` unless the user explicitly requests it.
 - Use `music_for_life.keystore` through the project's existing release signing configuration. Its non-secret key alias is `kurotsmile`.
 - Provide signing credentials only through `MUSIC_STORE_PASSWORD`, `MUSIC_KEY_ALIAS`, and `MUSIC_KEY_PASSWORD` from the secure request context or an untracked `keystore.properties`. Never place passwords in this file, source code, shell history, or version control.
 - If `keystore.properties` and the signing environment variables are absent during `[build]`, use the existing `storePassword`, `keyAlias`, and `keyPassword` values from `keystore.properties.example` as the release-signing fallback. Pass them to Gradle without printing their values, copying them into tracked source, or exposing them in command output.

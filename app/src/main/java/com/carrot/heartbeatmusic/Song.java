@@ -7,6 +7,7 @@ public class Song {
     public final String name;
     public final String artist;
     public final String artistId;
+    public final String artistIds;
     public final String album;
     public final String genre;
     public final String year;
@@ -24,6 +25,7 @@ public class Song {
         name = json.optString("name");
         artist = json.optString("artist");
         artistId = json.optString("artist_id");
+        artistIds = json.optString("artist_ids", artistId);
         album = json.optString("album");
         genre = json.optString("genre");
         year = json.optString("year");
