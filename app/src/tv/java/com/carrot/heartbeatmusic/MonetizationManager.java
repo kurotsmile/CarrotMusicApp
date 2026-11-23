@@ -18,6 +18,10 @@ final class MonetizationManager {
         action.run();
     }
 
+    void runAfterRewarded(Runnable action) {
+        action.run();
+    }
+
     void purchaseRemoveAds() {
     }
 

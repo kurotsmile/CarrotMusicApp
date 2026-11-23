@@ -42,4 +42,28 @@ public class Song {
     public boolean canPlay() {
         return mp3 != null && !mp3.trim().isEmpty();
     }
+
+    public JSONObject toJson() {
+        JSONObject json = new JSONObject();
+        try {
+            json.put("id", id);
+            json.put("name", name);
+            json.put("artist", artist);
+            json.put("artist_id", artistId);
+            json.put("artist_ids", artistIds);
+            json.put("album", album);
+            json.put("genre", genre);
+            json.put("year", year);
+            json.put("lang", lang);
+            json.put("country", country);
+            json.put("avatar", avatar);
+            json.put("mp3", mp3);
+            json.put("url", url);
+            json.put("description", description);
+            json.put("lyrics", lyrics);
+            json.put("view_count", viewCount);
+        } catch (Exception ignored) {
+        }
+        return json;
+    }
 }

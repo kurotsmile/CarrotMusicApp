@@ -29,6 +29,9 @@ import com.google.android.libraries.ads.mobile.sdk.initialization.Initialization
 import com.google.android.libraries.ads.mobile.sdk.interstitial.InterstitialAd;
 import com.google.android.libraries.ads.mobile.sdk.interstitial.InterstitialAdEventCallback;
 import com.google.android.libraries.ads.mobile.sdk.interstitial.InterstitialAdPreloader;
+import com.google.android.libraries.ads.mobile.sdk.rewarded.RewardedAd;
+import com.google.android.libraries.ads.mobile.sdk.rewarded.RewardedAdEventCallback;
+import com.google.android.libraries.ads.mobile.sdk.rewarded.RewardedAdPreloader;
 import com.google.android.ump.ConsentInformation;
 import com.google.android.ump.ConsentRequestParameters;
 import com.google.android.ump.UserMessagingPlatform;
@@ -164,6 +167,48 @@ final class MonetizationManager {
         ad.show(activity);
     }
 
+    void runAfterRewarded(Runnable action) {
+        if (adsRemoved) {
+            action.run();
+            return;
+        }
+        if (!adsInitialized) {
+            Toast.makeText(activity, "Rewarded ad is not ready. Please try again shortly.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        RewardedAd ad = RewardedAdPreloader.pollAd(BuildConfig.REWARDED_AD_UNIT_ID);
+        if (ad == null) {
+            Toast.makeText(activity, "Rewarded ad is still loading. Please try again shortly.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        boolean[] rewardState = new boolean[3]; // earned, dismissed, continued
+        Runnable continueAfterReward = () -> {
+            if (rewardState[0] && rewardState[1] && !rewardState[2] && !destroyed) {
+                rewardState[2] = true;
+                action.run();
+            }
+        };
+        ad.setAdEventCallback(new RewardedAdEventCallback() {
+            @Override
+            public void onAdDismissedFullScreenContent() {
+                rewardState[1] = true;
+                if (!rewardState[0]) {
+                    Toast.makeText(activity, "Watch the full ad to export this MP3.", Toast.LENGTH_LONG).show();
+                }
+                continueAfterReward.run();
+            }
+
+            @Override
+            public void onAdFailedToShowFullScreenContent(@NonNull FullScreenContentError error) {
+                Toast.makeText(activity, "Rewarded ad could not be shown. Please try again.", Toast.LENGTH_LONG).show();
+            }
+        });
+        ad.show(activity, rewardItem -> {
+            rewardState[0] = true;
+            continueAfterReward.run();
+        });
+    }
+
     void purchaseRemoveAds() {
         if (adsRemoved) {
             Toast.makeText(activity, "Ads are already removed for this Google Play account.", Toast.LENGTH_SHORT).show();
@@ -245,6 +290,7 @@ final class MonetizationManager {
         preferences.edit().putBoolean(PREF_ADS_REMOVED, adsRemoved).apply();
         if (adsRemoved && adsInitialized) {
             InterstitialAdPreloader.destroy(BuildConfig.INTERSTITIAL_AD_UNIT_ID);
+            RewardedAdPreloader.destroy(BuildConfig.REWARDED_AD_UNIT_ID);
             adsInitialized = false;
         }
         if (notifyUser) {
@@ -291,6 +337,26 @@ final class MonetizationManager {
                                     Log.d(TAG, "Interstitial preload cache exhausted.");
                                 }
                             });
+                    AdRequest rewardedRequest = new AdRequest.Builder(BuildConfig.REWARDED_AD_UNIT_ID).build();
+                    RewardedAdPreloader.start(
+                            BuildConfig.REWARDED_AD_UNIT_ID,
+                            new PreloadConfiguration(rewardedRequest, 1),
+                            new PreloadCallback() {
+                                @Override
+                                public void onAdPreloaded(@NonNull String preloadId, @NonNull ResponseInfo responseInfo) {
+                                    Log.d(TAG, "Rewarded ad preloaded.");
+                                }
+
+                                @Override
+                                public void onAdFailedToPreload(@NonNull String preloadId, @NonNull LoadAdError error) {
+                                    Log.d(TAG, "Rewarded preload failed: " + error.getMessage());
+                                }
+
+                                @Override
+                                public void onAdsExhausted(@NonNull String preloadId) {
+                                    Log.d(TAG, "Rewarded preload cache exhausted.");
+                                }
+                            });
                 }))).start();
     }
 
@@ -298,6 +364,7 @@ final class MonetizationManager {
         destroyed = true;
         if (adsInitialized) {
             InterstitialAdPreloader.destroy(BuildConfig.INTERSTITIAL_AD_UNIT_ID);
+            RewardedAdPreloader.destroy(BuildConfig.REWARDED_AD_UNIT_ID);
             adsInitialized = false;
         }
         if (billingClient != null) {

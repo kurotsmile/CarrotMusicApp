@@ -3,12 +3,15 @@ package com.carrot.heartbeatmusic;
 import android.Manifest;
 import android.app.Activity;
 import android.app.Dialog;
+import android.app.DownloadManager;
+import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.ColorStateList;
+import android.database.Cursor;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -19,6 +22,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Environment;
 import android.text.InputType;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -51,6 +55,13 @@ import androidx.media3.session.SessionToken;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 
+import org.json.JSONArray;
+
+import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -59,6 +70,9 @@ import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final int VOICE_SEARCH_REQUEST = 42;
+    private static final int EXPORT_MP3_REQUEST = 43;
+    private static final String PREF_LOCAL_PLAYLIST = "local_playlist";
+    private static final String PREF_OFFLINE_DOWNLOAD_PREFIX = "offline_download_";
     private static final int[] SLEEP_TIMER_MINUTES = new int[]{5, 15, 30, 60, 120, 180};
     private static final int LOOP_MODE_OFF = 0;
     private static final int LOOP_MODE_ALL = 1;
@@ -73,11 +87,12 @@ public class MainActivity extends Activity {
 
     private MusicRepository repository;
     private MonetizationManager monetizationManager;
-    private final ImageLoader imageLoader = new ImageLoader();
+    private ImageLoader imageLoader;
     private final PlaylistManager playlistManager = new PlaylistManager();
     private final List<Song> currentSongs = new ArrayList<>();
     private final List<Song> homeSongs = new ArrayList<>();
     private final List<Song> monthlyRankSongs = new ArrayList<>();
+    private final List<Song> randomSongs = new ArrayList<>();
     private final Map<String, List<ImageView>> songLoadingViews = new HashMap<>();
     private final List<MusicLanguage> languages = new ArrayList<>();
     private final List<MusicMenuAction> menuActions = new ArrayList<>();
@@ -110,8 +125,10 @@ public class MainActivity extends Activity {
     private AudioWaveView detailWaveView;
     private String detailSongId = "";
     private Song currentPlayingSong = null;
+    private Song pendingExportSong = null;
     private String loadingSongId = "";
     private SharedPreferences appPrefs;
+    private DownloadManager downloadManager;
     private MediaController controller;
     private String currentLang = "en";
     private String lastHeading = "New songs";
@@ -126,6 +143,7 @@ public class MainActivity extends Activity {
     private String accountEmail = "";
     private boolean sleepTimerActive = false;
     private boolean sleepTimerExitApp = false;
+    private boolean ratePromptVisible = false;
     private int sleepTimerIndex = 2;
     private long sleepTimerEndsAtMillis = 0L;
     private Runnable sleepTimerRunnable = null;
@@ -183,8 +201,11 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 20);
         }
+        imageLoader = new ImageLoader(this);
         repository = new MusicRepository(this);
         appPrefs = getSharedPreferences("heartbeat_music_app", MODE_PRIVATE);
+        downloadManager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        restoreLocalPlaylist();
         monetizationManager = new MonetizationManager(this, appPrefs);
         monetizationManager.start();
         currentLang = appPrefs.getString("selected_lang", "en");
@@ -1198,8 +1219,29 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     homeSongs.clear();
                     homeSongs.addAll(songs);
+                    randomSongs.clear();
                     renderHomeTabs("new");
                     loadMonthlyRank(false);
+                });
+            }
+
+            @Override
+            public void onError(String message) {
+                runOnUiThread(() -> showError(message));
+            }
+        });
+    }
+
+    private void loadRandomSongs() {
+        progressBar.setVisibility(View.VISIBLE);
+        showListLoading("Loading random songs...");
+        repository.loadRandom(currentLang, new MusicRepository.Callback() {
+            @Override
+            public void onSongs(List<Song> songs) {
+                runOnUiThread(() -> {
+                    randomSongs.clear();
+                    randomSongs.addAll(songs);
+                    renderHomeTabs("random");
                 });
             }
 
@@ -1462,8 +1504,12 @@ public class MainActivity extends Activity {
         detailWaveView = null;
         detailSongId = "";
         currentHomeTab = activeTab == null || activeTab.isEmpty() ? "new" : activeTab;
-        lastHeading = "rank".equals(currentHomeTab) ? "Monthly chart" : "New songs";
-        List<Song> songs = "rank".equals(currentHomeTab) ? monthlyRankSongs : homeSongs;
+        lastHeading = "rank".equals(currentHomeTab)
+                ? "Monthly chart"
+                : ("random".equals(currentHomeTab) ? "Random" : "New songs");
+        List<Song> songs = "rank".equals(currentHomeTab)
+                ? monthlyRankSongs
+                : ("random".equals(currentHomeTab) ? randomSongs : homeSongs);
         currentSongs.clear();
         currentSongs.addAll(songs);
         songList.removeAllViews();
@@ -1494,6 +1540,9 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams rankParams = new LinearLayout.LayoutParams(0, dp(46), 1);
         rankParams.setMargins(dp(8), 0, 0, 0);
         tabs.addView(homeTabButton("Monthly chart", "rank"), rankParams);
+        LinearLayout.LayoutParams randomParams = new LinearLayout.LayoutParams(0, dp(46), 1);
+        randomParams.setMargins(dp(8), 0, 0, 0);
+        tabs.addView(homeTabButton("Random", "random"), randomParams);
         return tabs;
     }
 
@@ -1507,6 +1556,11 @@ public class MainActivity extends Activity {
             if ("rank".equals(tab) && monthlyRankSongs.isEmpty()) {
                 currentHomeTab = "rank";
                 loadMonthlyRank(true);
+                return;
+            }
+            if ("random".equals(tab)) {
+                currentHomeTab = "random";
+                loadRandomSongs();
                 return;
             }
             renderHomeTabs(tab);
@@ -1655,6 +1709,9 @@ public class MainActivity extends Activity {
         songLoadingViews.clear();
         scrollToTop();
 
+        LinearLayout back = backButton("Music List");
+        back.setOnClickListener(view -> loadHome());
+        songList.addView(back);
         songList.addView(heading("Playlist"));
 
         if (currentSongs.isEmpty()) {
@@ -1780,11 +1837,15 @@ public class MainActivity extends Activity {
         meta.addView(actions);
 
         actions.addView(smallIconButton(R.drawable.up_arrow, view -> {
-            playlistManager.moveUp(index);
+            if (playlistManager.moveUp(index)) {
+                persistLocalPlaylist();
+            }
             renderPlaylistScreen();
         }));
         actions.addView(smallIconButton(R.drawable.down_arrow, view -> {
-            playlistManager.moveDown(index);
+            if (playlistManager.moveDown(index)) {
+                persistLocalPlaylist();
+            }
             renderPlaylistScreen();
         }));
         actions.addView(smallIconButton(R.drawable.info, view -> {
@@ -1792,12 +1853,18 @@ public class MainActivity extends Activity {
             showSongDetail(song, index);
         }));
         actions.addView(smallIconButton(R.drawable.delete, view -> {
-            playlistManager.removeAt(index);
+            if (playlistManager.removeAt(index)) {
+                persistLocalPlaylist();
+                removeOfflineSong(song);
+            }
             updatePlaylistButtons();
             renderPlaylistScreen();
         }));
 
-        row.setOnClickListener(view -> playAt(index));
+        row.setOnClickListener(view -> {
+            playlistManager.setCurrentIndex(index);
+            playAt(index);
+        });
         return row;
     }
 
@@ -1958,6 +2025,12 @@ public class MainActivity extends Activity {
                 shareSong(song);
             }
         });
+
+        LinearLayout export = iconActionButton("Export MP3", android.R.drawable.stat_sys_download_done);
+        LinearLayout.LayoutParams exportParams = new LinearLayout.LayoutParams(-1, dp(48));
+        exportParams.setMargins(0, 0, 0, dp(16));
+        songList.addView(export, exportParams);
+        export.setOnClickListener(view -> monetizationManager.runAfterRewarded(() -> startMp3Export(song)));
 
         if (!song.description.isEmpty()) {
             songList.addView(sectionTitle("Description"));
@@ -2277,6 +2350,7 @@ public class MainActivity extends Activity {
         controller.play();
         updateNowPlaying(song);
         updatePlayerState();
+        recordPlaybackForRatePrompt();
     }
 
     private List<MediaItem> buildPlaylistMediaItems() {
@@ -2286,16 +2360,156 @@ public class MainActivity extends Activity {
                     .setTitle(song.name)
                     .setArtist(song.artist)
                     .setAlbumTitle(song.album)
-                    .setArtworkUri(Uri.parse(song.avatar))
+                    .setArtworkUri(imageLoader.cachedUri(song.avatar))
                     .build();
             MediaItem item = new MediaItem.Builder()
-                    .setUri(song.mp3)
+                    .setUri(playbackUri(song))
                     .setMediaId(song.id)
                     .setMediaMetadata(metadata)
                     .build();
             mediaItems.add(item);
         }
         return mediaItems;
+    }
+
+    private void restoreLocalPlaylist() {
+        try {
+            JSONArray savedSongs = new JSONArray(appPrefs.getString(PREF_LOCAL_PLAYLIST, "[]"));
+            for (int i = 0; i < savedSongs.length(); i++) {
+                if (savedSongs.optJSONObject(i) != null) {
+                    playlistManager.add(new Song(savedSongs.optJSONObject(i)));
+                }
+            }
+        } catch (Exception ignored) {
+            playlistManager.clear();
+        }
+        for (Song song : playlistManager.playlistItems()) {
+            imageLoader.prefetch(song.avatar);
+            ensureOfflineDownload(song);
+        }
+    }
+
+    private void persistLocalPlaylist() {
+        JSONArray songs = new JSONArray();
+        for (Song song : playlistManager.playlistItems()) {
+            songs.put(song.toJson());
+        }
+        appPrefs.edit().putString(PREF_LOCAL_PLAYLIST, songs.toString()).apply();
+    }
+
+    private String offlineFileName(Song song) {
+        String safeId = song.id == null ? "" : song.id.replaceAll("[^a-zA-Z0-9._-]", "_");
+        if (safeId.isEmpty()) {
+            safeId = String.valueOf(song.mp3.hashCode());
+        }
+        return "heartbeat_" + safeId + ".mp3";
+    }
+
+    private File offlineFile(Song song) {
+        File musicDirectory = getExternalFilesDir(Environment.DIRECTORY_MUSIC);
+        return musicDirectory == null ? null : new File(musicDirectory, offlineFileName(song));
+    }
+
+    private Uri playbackUri(Song song) {
+        File file = offlineFile(song);
+        if (file != null && file.isFile() && file.length() > 0L && isOfflineDownloadComplete(song)) {
+            return Uri.fromFile(file);
+        }
+        return Uri.parse(song.mp3);
+    }
+
+    private boolean isOfflineDownloadComplete(Song song) {
+        if (downloadManager == null) {
+            return false;
+        }
+        long downloadId = appPrefs.getLong(PREF_OFFLINE_DOWNLOAD_PREFIX + song.id, -1L);
+        if (downloadId < 0L) {
+            return true;
+        }
+        try (Cursor cursor = downloadManager.query(
+                new DownloadManager.Query().setFilterById(downloadId))) {
+            return cursor != null
+                    && cursor.moveToFirst()
+                    && cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                    == DownloadManager.STATUS_SUCCESSFUL;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean ensureOfflineDownload(Song song) {
+        if (song == null || !song.canPlay() || downloadManager == null) {
+            return false;
+        }
+        File file = offlineFile(song);
+        if (file == null) {
+            return false;
+        }
+        String downloadKey = PREF_OFFLINE_DOWNLOAD_PREFIX + song.id;
+        long downloadId = appPrefs.getLong(downloadKey, -1L);
+        if (downloadId >= 0L) {
+            int status = -1;
+            try (Cursor cursor = downloadManager.query(
+                    new DownloadManager.Query().setFilterById(downloadId))) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                }
+            } catch (Exception ignored) {
+            }
+            if (status == DownloadManager.STATUS_PENDING
+                    || status == DownloadManager.STATUS_RUNNING
+                    || status == DownloadManager.STATUS_PAUSED) {
+                return true;
+            }
+            if (status == DownloadManager.STATUS_SUCCESSFUL && file.isFile() && file.length() > 0L) {
+                return true;
+            }
+            try {
+                downloadManager.remove(downloadId);
+            } catch (Exception ignored) {
+            }
+            appPrefs.edit().remove(downloadKey).apply();
+            if (file.exists()) {
+                file.delete();
+            }
+        } else if (file.isFile() && file.length() > 0L) {
+            return true;
+        }
+
+        try {
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(song.mp3));
+            request.setTitle(song.name);
+            request.setDescription("Saving for offline playback");
+            request.setMimeType("audio/mpeg");
+            request.setAllowedOverMetered(true);
+            request.setAllowedOverRoaming(false);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_MUSIC, offlineFileName(song));
+            long queuedId = downloadManager.enqueue(request);
+            appPrefs.edit().putLong(downloadKey, queuedId).apply();
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void removeOfflineSong(Song song) {
+        if (song == null) {
+            return;
+        }
+        String downloadKey = PREF_OFFLINE_DOWNLOAD_PREFIX + song.id;
+        long downloadId = appPrefs.getLong(downloadKey, -1L);
+        if (downloadManager != null && downloadId >= 0L) {
+            try {
+                downloadManager.remove(downloadId);
+            } catch (Exception ignored) {
+            }
+        }
+        appPrefs.edit().remove(downloadKey).apply();
+        File file = offlineFile(song);
+        if (file != null && file.exists()) {
+            file.delete();
+        }
     }
 
     private void updateNowPlaying(Song song) {
@@ -2315,11 +2529,21 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "This song has no playable audio file.", Toast.LENGTH_SHORT).show();
             return;
         }
+        boolean currentAdded = false;
         if (currentPlayingSong != null && !currentPlayingSong.id.equals(song.id)
                 && playlistManager.indexOf(currentPlayingSong.id) < 0) {
-            playlistManager.add(currentPlayingSong);
+            currentAdded = playlistManager.add(currentPlayingSong);
         }
         boolean added = playlistManager.add(song);
+        if (currentAdded) {
+            imageLoader.prefetch(currentPlayingSong.avatar);
+            ensureOfflineDownload(currentPlayingSong);
+        }
+        imageLoader.prefetch(song.avatar);
+        boolean offlineReady = ensureOfflineDownload(song);
+        if (currentAdded || added) {
+            persistLocalPlaylist();
+        }
         int currentIndex = playlistManager.indexOf(currentPlayingSong == null ? song.id : currentPlayingSong.id);
         if (currentIndex >= 0) {
             boolean queueNeedsSync = added || !playlistManager.isPlaylistActive()
@@ -2339,7 +2563,10 @@ public class MainActivity extends Activity {
             }
         }
         updatePlaylistButtons();
-        Toast.makeText(this, added ? "Added to playlist." : "Song is already in the playlist.", Toast.LENGTH_SHORT).show();
+        String message = added
+                ? (offlineReady ? "Added to playlist. Saving for offline playback." : "Added to playlist, but offline download could not start.")
+                : "Song is already in the playlist.";
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
     private void playNextFromPlaylist() {
@@ -2441,6 +2668,158 @@ public class MainActivity extends Activity {
         startActivity(Intent.createChooser(shareIntent, "Share"));
     }
 
+    private void startMp3Export(Song song) {
+        if (song == null || !song.canPlay()) {
+            Toast.makeText(this, "This song has no MP3 file to export.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String fileName = song.name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        if (fileName.isEmpty()) {
+            fileName = "heartbeat-song";
+        }
+        if (!fileName.toLowerCase(Locale.US).endsWith(".mp3")) {
+            fileName += ".mp3";
+        }
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("audio/mpeg");
+        intent.putExtra(Intent.EXTRA_TITLE, fileName);
+        pendingExportSong = song;
+        try {
+            startActivityForResult(intent, EXPORT_MP3_REQUEST);
+        } catch (ActivityNotFoundException e) {
+            pendingExportSong = null;
+            Toast.makeText(this, "No file browser is available.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void exportMp3(Song song, Uri destination) {
+        Toast.makeText(this, "Exporting MP3...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(song.mp3).openConnection();
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(30000);
+                connection.setInstanceFollowRedirects(true);
+                int responseCode = connection.getResponseCode();
+                if (responseCode < 200 || responseCode >= 300) {
+                    throw new IllegalStateException("Download failed (HTTP " + responseCode + ")");
+                }
+                try (InputStream input = connection.getInputStream();
+                     OutputStream output = getContentResolver().openOutputStream(destination, "w")) {
+                    if (output == null) {
+                        throw new IllegalStateException("Could not open the selected file.");
+                    }
+                    byte[] buffer = new byte[16 * 1024];
+                    int read;
+                    while ((read = input.read(buffer)) != -1) {
+                        output.write(buffer, 0, read);
+                    }
+                    output.flush();
+                }
+                runOnUiThread(() -> Toast.makeText(this, "MP3 exported successfully.", Toast.LENGTH_LONG).show());
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        e.getMessage() == null ? "Could not export the MP3 file." : e.getMessage(),
+                        Toast.LENGTH_LONG).show());
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+        }, "mp3-export").start();
+    }
+
+    private void recordPlaybackForRatePrompt() {
+        if (!"mobile".equals(BuildConfig.FLAVOR) || appPrefs.getBoolean("rate_prompt_completed", false)) {
+            return;
+        }
+        int playCount = appPrefs.getInt("rate_prompt_play_count", 0) + 1;
+        appPrefs.edit().putInt("rate_prompt_play_count", playCount).apply();
+        int nextPromptAt = appPrefs.getInt("rate_prompt_next_at", 5);
+        if (playCount >= nextPromptAt) {
+            playbackPositionHandler.postDelayed(this::showRatePrompt, 1500L);
+        }
+    }
+
+    private void showRatePrompt() {
+        if (ratePromptVisible || isFinishing() || appPrefs.getBoolean("rate_prompt_completed", false)) {
+            return;
+        }
+        ratePromptVisible = true;
+        Dialog dialog = new Dialog(this);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(18), dp(20), dp(18));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.WHITE);
+        background.setCornerRadius(dp(20));
+        panel.setBackground(background);
+
+        TextView stars = bodyText("★★★★★", 24, ACCENT);
+        stars.setGravity(Gravity.CENTER);
+        panel.addView(stars);
+        TextView title = bodyText("Enjoying Heartbeat Music?", 19, TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, dp(4), 0, dp(5));
+        panel.addView(title);
+        TextView message = bodyText("Your 5-star review helps more music lovers find the app.", 14, MUTED);
+        message.setGravity(Gravity.CENTER);
+        message.setPadding(0, 0, 0, dp(14));
+        panel.addView(message);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(buttons, new LinearLayout.LayoutParams(-1, dp(46)));
+        TextView later = actionButton("Later");
+        later.setTextColor(MUTED);
+        later.setBackgroundColor(Color.rgb(255, 240, 230));
+        buttons.addView(later, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView rate = actionButton("Rate 5 stars");
+        LinearLayout.LayoutParams rateParams = new LinearLayout.LayoutParams(0, -1, 1);
+        rateParams.setMargins(dp(10), 0, 0, 0);
+        buttons.addView(rate, rateParams);
+
+        Runnable remindLater = () -> appPrefs.edit()
+                .putInt("rate_prompt_next_at", appPrefs.getInt("rate_prompt_play_count", 0) + 20)
+                .apply();
+        later.setOnClickListener(view -> {
+            remindLater.run();
+            dialog.dismiss();
+        });
+        rate.setOnClickListener(view -> {
+            appPrefs.edit().putBoolean("rate_prompt_completed", true).apply();
+            dialog.dismiss();
+            openStoreRating();
+        });
+        dialog.setOnCancelListener(value -> remindLater.run());
+        dialog.setOnDismissListener(value -> ratePromptVisible = false);
+        dialog.setContentView(panel);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setGravity(Gravity.BOTTOM);
+            window.setWindowAnimations(R.style.LoopModeDialogAnimation);
+        }
+        dialog.show();
+        if (window != null) {
+            window.getDecorView().setPadding(dp(16), 0, dp(16), dp(18));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void openStoreRating() {
+        String packageId = "com.carrotstore.heartbeatmusic";
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageId)));
+        } catch (ActivityNotFoundException e) {
+            startActivity(new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://play.google.com/store/apps/details?id=" + packageId)));
+        }
+    }
+
     private void updatePlayerState() {
         if (controller != null && controller.isPlaying()) {
             playPauseButton.setImageResource(android.R.drawable.ic_media_pause);
@@ -2503,6 +2882,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == EXPORT_MP3_REQUEST) {
+            Song song = pendingExportSong;
+            pendingExportSong = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null && song != null) {
+                exportMp3(song, data.getData());
+            }
+            return;
+        }
         if (requestCode != VOICE_SEARCH_REQUEST || resultCode != RESULT_OK || data == null) {
             return;
         }

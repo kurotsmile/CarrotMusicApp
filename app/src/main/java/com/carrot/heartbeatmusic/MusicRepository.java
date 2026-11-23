@@ -78,6 +78,13 @@ public class MusicRepository {
         load(url, "songs", "songs_monthly_rank_v1_" + normalizedLang + "_" + month, SONG_LIST_TTL_MS, callback);
     }
 
+    public void loadRandom(String lang, Callback callback) {
+        String normalizedLang = lang == null || lang.isEmpty() ? "en" : lang;
+        String url = BuildConfig.MUSIC_API_BASE + "?action=random&limit=36&lang=" + encode(normalizedLang)
+                + "&_=" + System.currentTimeMillis();
+        load(url, "songs", "", 0, callback);
+    }
+
     public void search(String query, String lang, Callback callback) {
         load(BuildConfig.MUSIC_API_BASE + "?action=search&limit=48&q=" + encode(query) + "&lang=" + encode(lang), "songs", "", 0, callback);
     }

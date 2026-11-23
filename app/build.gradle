@@ -23,7 +23,7 @@ android {
         applicationId "com.carrotstore.heartbeatmusic"
         minSdk 24
         targetSdk 36
-        versionCode 6
+        versionCode 8
         versionName "1.0.0"
         buildConfigField "String", "MUSIC_API_BASE", "\"https://heartbeatplay.com/api.php\""
         buildConfigField "String", "REMOVE_ADS_PRODUCT_ID", "\"com.carrotstore.heartbeatmusic.removeads\""
@@ -70,11 +70,13 @@ android {
             applicationIdSuffix ".debug"
             versionNameSuffix "-debug"
             buildConfigField "String", "INTERSTITIAL_AD_UNIT_ID", "\"ca-app-pub-5388516931803092/2098678137\""
+            buildConfigField "String", "REWARDED_AD_UNIT_ID", "\"ca-app-pub-5388516931803092/5195695126\""
         }
         release {
             minifyEnabled true
             signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
             buildConfigField "String", "INTERSTITIAL_AD_UNIT_ID", "\"ca-app-pub-5388516931803092/2098678137\""
+            buildConfigField "String", "REWARDED_AD_UNIT_ID", "\"ca-app-pub-5388516931803092/5195695126\""
         }
     }
 }
